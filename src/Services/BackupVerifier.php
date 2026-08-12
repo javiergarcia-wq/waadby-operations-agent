@@ -12,8 +12,20 @@ class BackupVerifier
     public function __construct(private readonly OperationsReporter $reporter) {}
 
     /** @return array<string, mixed> */
-    public function verify(string $reference, ?string $idempotencyKey = null, ?int $actorId = null): array
+    public function verify(string $reference, ?string $idempotencyKey = null, ?int $actorId = null, bool $allowPortable = false): array
     {
+        if (is_file($reference)) {
+            if (! $allowPortable) {
+                throw new RuntimeException('Las rutas directas de backup solo estan permitidas en el CLI local.');
+            }
+
+            $result = $this->inspect($reference, (string) config('waadby_operations.application.code'));
+            $portable = [...$result, 'status' => 'verified', 'verification_source' => 'portable_inline'];
+            $this->reportPortableSuccess($portable, $idempotencyKey, $actorId);
+
+            return $portable;
+        }
+
         $artifact = $this->reporter->findArtifact($reference);
         if (! $artifact) {
             throw new RuntimeException('No se encontro el backup solicitado.');
@@ -27,12 +39,12 @@ class BackupVerifier
         $this->reporter->audit('operations.backup.verification_started', $this->context($operation, $artifact));
 
         try {
-            $result = $this->inspect(
+            $result = [...$this->inspect(
                 (string) ($artifact['absolute_path'] ?? $artifact['storage_path']),
                 (string) config('waadby_operations.application.code'),
                 $artifactId,
                 $artifact['sha256'] ?? null,
-            );
+            ), 'verification_source' => 'persisted_verified'];
 
             if ($artifactId) {
                 $this->reporter->updateArtifact($artifactId, ['status' => 'verified', 'verified_at' => now()]);
@@ -49,6 +61,31 @@ class BackupVerifier
             $this->reporter->finishOperation($operation['public_id'], 'failed', [], 'backup_verification_failed', $safe);
             $this->reporter->audit('operations.backup.failed', [...$this->context($operation, $artifact), 'result' => 'failed', 'error_code' => 'backup_verification_failed']);
             throw new RuntimeException($safe, 0, $exception);
+        }
+    }
+
+    /** @param array<string, mixed> $result */
+    private function reportPortableSuccess(array $result, ?string $idempotencyKey, ?int $actorId): void
+    {
+        try {
+            $operation = $this->reporter->beginOperation('backup_verify', $idempotencyKey, $actorId);
+            try {
+                $this->reporter->finishOperation($operation['public_id'], 'succeeded', $result);
+            } catch (\Throwable) {
+                // Portable verification must survive unavailable operations persistence.
+            }
+            try {
+                $this->reporter->audit('operations.backup.verified', [
+                    'operation_public_id' => $operation['public_id'],
+                    'backup_public_id' => null,
+                    'verification_source' => 'portable_inline',
+                    'result' => 'verified',
+                ]);
+            } catch (\Throwable) {
+                // Audit is best-effort only in offline recovery mode.
+            }
+        } catch (\Throwable) {
+            // No operation tables are required for portable verification.
         }
     }
 

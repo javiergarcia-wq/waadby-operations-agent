@@ -42,12 +42,7 @@ class NullOperationsReporter implements OperationsReporter
 
     public function findArtifact(string $reference): ?array
     {
-        return $this->artifacts[$reference] ?? (is_file($reference) ? [
-            'public_id' => null,
-            'status' => null,
-            'absolute_path' => $reference,
-            'storage_path' => $reference,
-        ] : null);
+        return $this->artifacts[$reference] ?? null;
     }
 
     public function audit(string $event, array $context = []): void {}

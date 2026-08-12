@@ -14,6 +14,7 @@ class InventoryService
         private readonly Application $application,
         private readonly DatabaseManager $database,
         private readonly FilesystemManager $filesystems,
+        private readonly DatabaseRuntimeInfo $databaseInfo,
     ) {}
 
     /** @return array<string, mixed> */
@@ -29,7 +30,7 @@ class InventoryService
                 $migrationCount = (int) $connection->table('migrations')->count();
                 $lastMigration = $connection->table('migrations')->orderByDesc('batch')->orderByDesc('id')->value('migration');
             }
-            $databaseVersion = $this->databaseVersion((string) $connection->getDriverName());
+            $databaseVersion = $this->databaseInfo->inspect()['version'];
         } catch (\Throwable) {
             // Inventory is best-effort and never exposes connection diagnostics or credentials.
         }
@@ -66,17 +67,6 @@ class InventoryService
             ],
             'timestamp' => now()->utc()->toIso8601String(),
         ];
-    }
-
-    private function databaseVersion(string $driver): ?string
-    {
-        $row = match ($driver) {
-            'sqlite' => $this->database->selectOne('select sqlite_version() as version'),
-            'mysql', 'mariadb', 'pgsql' => $this->database->selectOne('select version() as version'),
-            default => null,
-        };
-
-        return $row ? (string) $row->version : null;
     }
 
     private function gitCommit(): ?string

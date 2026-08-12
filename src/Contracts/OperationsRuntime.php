@@ -14,10 +14,10 @@ interface OperationsRuntime
     public function backup(string $type = 'operational', ?string $idempotencyKey = null, ?int $actorId = null): array;
 
     /** @return array<string, mixed> */
-    public function verify(string $reference, ?string $idempotencyKey = null, ?int $actorId = null): array;
+    public function verify(string $reference, ?string $idempotencyKey = null, ?int $actorId = null, bool $allowPortable = false): array;
 
     /** @return array<string, mixed> */
-    public function restorePreflight(string $reference, ?string $idempotencyKey = null, ?int $actorId = null): array;
+    public function restorePreflight(string $reference, ?string $idempotencyKey = null, ?int $actorId = null, bool $allowPortable = false): array;
 
     /** @return array<string, mixed> */
     public function updatePreflight(string $manifest, ?string $idempotencyKey = null, ?int $actorId = null): array;

@@ -24,6 +24,6 @@ final class ArchivePath
 
     public static function isPlainEnvironmentFile(string $path): bool
     {
-        return basename(str_replace('\\', '/', $path)) === '.env';
+        return str_starts_with(strtolower(basename(str_replace('\\', '/', $path))), '.env');
     }
 }

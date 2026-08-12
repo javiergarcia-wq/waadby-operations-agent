@@ -14,7 +14,7 @@ class BackupVerifyCommand extends Command
     public function handle(OperationsRuntime $runtime): int
     {
         try {
-            $result = $runtime->verify((string) $this->argument('backup'), $this->option('idempotency-key'));
+            $result = $runtime->verify((string) $this->argument('backup'), $this->option('idempotency-key'), allowPortable: true);
             $this->option('json')
                 ? $this->line(json_encode($result, JSON_THROW_ON_ERROR | JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE))
                 : $this->info("Backup {$result['backup_id']} verificado correctamente.");

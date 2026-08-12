@@ -10,6 +10,7 @@ class UpdatePreflightService
 {
     public function __construct(
         private readonly ReleaseManifestValidator $validator,
+        private readonly DatabaseRuntimeInfo $databaseInfo,
         private readonly OperationsReporter $reporter,
     ) {}
 
@@ -18,8 +19,8 @@ class UpdatePreflightService
     {
         $operation = $this->reporter->beginOperation('update_preflight', $idempotencyKey, $actorId);
         try {
-            $manifest = $this->read($manifestPath);
-            $blockers = $this->validator->errors($manifest);
+            [$manifest, $schemaErrors] = $this->read($manifestPath);
+            $blockers = $schemaErrors;
             $warnings = [];
             $currentVersion = (string) config('waadby_operations.application.version');
             if (($manifest['application_code'] ?? null) !== config('waadby_operations.application.code')) {
@@ -42,9 +43,28 @@ class UpdatePreflightService
                 }
             }
             $database = is_array($requirements['database'] ?? null) ? $requirements['database'] : [];
-            $currentDriver = app('db')->connection()->getDriverName();
+            $currentDatabase = $this->databaseInfo->inspect();
+            $currentDriver = $currentDatabase['driver'];
             if (is_string($database['driver'] ?? null) && $database['driver'] !== $currentDriver) {
                 $blockers[] = "El release requiere database.driver={$database['driver']}.";
+            }
+            $requiredDatabaseVersion = is_string($database['minimum_version'] ?? null)
+                ? DatabaseRuntimeInfo::normalizeVersion($database['minimum_version'])
+                : null;
+            $databaseVersionCompatible = null;
+            if (is_string($database['minimum_version'] ?? null)) {
+                if ($requiredDatabaseVersion === null) {
+                    $databaseVersionCompatible = false;
+                    $blockers[] = 'requirements.database.minimum_version no contiene una version comparable.';
+                } elseif ($currentDatabase['version'] === null) {
+                    $databaseVersionCompatible = false;
+                    $blockers[] = "No se pudo determinar la version actual de BD requerida (minima {$requiredDatabaseVersion}).";
+                } else {
+                    $databaseVersionCompatible = version_compare($currentDatabase['version'], $requiredDatabaseVersion, '>=');
+                    if (! $databaseVersionCompatible) {
+                        $blockers[] = "La version de BD {$currentDatabase['version']} es anterior a la minima {$requiredDatabaseVersion}.";
+                    }
+                }
             }
 
             $newConfiguration = [];
@@ -80,9 +100,13 @@ class UpdatePreflightService
 
             $result = [
                 'compatible' => $blockers === [],
-                'schema_valid' => $this->validator->errors($manifest) === [],
+                'schema_valid' => $schemaErrors === [],
                 'current_version' => $currentVersion,
                 'target_version' => $manifest['version'] ?? null,
+                'database_driver' => $currentDriver,
+                'database_version' => $currentDatabase['version'],
+                'database_minimum_version_required' => $requiredDatabaseVersion,
+                'database_version_compatible' => $databaseVersionCompatible,
                 'warnings' => array_values(array_unique($warnings)),
                 'blockers' => array_values(array_unique($blockers)),
                 'new_configuration_required' => $newConfiguration,
@@ -102,14 +126,15 @@ class UpdatePreflightService
         }
     }
 
-    /** @return array<string, mixed> */
+    /** @return array{array<string, mixed>, list<string>} */
     private function read(string $path): array
     {
         if (! is_file($path) || ! is_readable($path)) {
             throw new RuntimeException('No se encontro el release manifest solicitado.');
         }
         try {
-            $manifest = json_decode((string) file_get_contents($path), true, 64, JSON_THROW_ON_ERROR);
+            $json = (string) file_get_contents($path);
+            $manifest = json_decode($json, true, 64, JSON_THROW_ON_ERROR);
         } catch (\JsonException) {
             throw new RuntimeException('El release manifest no contiene JSON valido.');
         }
@@ -117,7 +142,7 @@ class UpdatePreflightService
             throw new RuntimeException('El release manifest debe contener un objeto JSON.');
         }
 
-        return $manifest;
+        return [$manifest, $this->validator->errorsFromJson($json)];
     }
 
     private function phpMatches(string $constraint): bool

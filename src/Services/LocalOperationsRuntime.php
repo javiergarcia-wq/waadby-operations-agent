@@ -36,14 +36,14 @@ class LocalOperationsRuntime implements OperationsRuntime
         return $this->backupService->create($type, $idempotencyKey, $actorId);
     }
 
-    public function verify(string $reference, ?string $idempotencyKey = null, ?int $actorId = null): array
+    public function verify(string $reference, ?string $idempotencyKey = null, ?int $actorId = null, bool $allowPortable = false): array
     {
-        return $this->backupVerifier->verify($reference, $idempotencyKey, $actorId);
+        return $this->backupVerifier->verify($reference, $idempotencyKey, $actorId, $allowPortable);
     }
 
-    public function restorePreflight(string $reference, ?string $idempotencyKey = null, ?int $actorId = null): array
+    public function restorePreflight(string $reference, ?string $idempotencyKey = null, ?int $actorId = null, bool $allowPortable = false): array
     {
-        return $this->restorePreflightService->analyze($reference, $idempotencyKey, $actorId);
+        return $this->restorePreflightService->analyze($reference, $idempotencyKey, $actorId, $allowPortable);
     }
 
     public function updatePreflight(string $manifest, ?string $idempotencyKey = null, ?int $actorId = null): array

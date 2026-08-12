@@ -14,7 +14,7 @@ class RestorePreflightCommand extends Command
     public function handle(OperationsRuntime $runtime): int
     {
         try {
-            $result = $runtime->restorePreflight((string) $this->argument('backup'), $this->option('idempotency-key'));
+            $result = $runtime->restorePreflight((string) $this->argument('backup'), $this->option('idempotency-key'), allowPortable: true);
             $this->line(json_encode($result, JSON_THROW_ON_ERROR | JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE));
 
             return $result['compatible'] ? self::SUCCESS : self::FAILURE;

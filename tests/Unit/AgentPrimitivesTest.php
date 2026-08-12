@@ -5,6 +5,7 @@ namespace Tests\Package\Operations\Unit;
 use PHPUnit\Framework\Attributes\DataProvider;
 use RuntimeException;
 use Tests\TestCase;
+use Waadby\OperationsAgent\Services\DatabaseRuntimeInfo;
 use Waadby\OperationsAgent\Services\ReleaseManifestValidator;
 use Waadby\OperationsAgent\Services\SensitiveConfigurationCipher;
 use Waadby\OperationsAgent\Support\ArchivePath;
@@ -48,7 +49,27 @@ class AgentPrimitivesTest extends TestCase
     public function test_plain_environment_file_is_detected_at_any_depth(): void
     {
         $this->assertTrue(ArchivePath::isPlainEnvironmentFile('snapshot/.env'));
+        $this->assertTrue(ArchivePath::isPlainEnvironmentFile('.env.local'));
+        $this->assertTrue(ArchivePath::isPlainEnvironmentFile('.env.production'));
+        $this->assertTrue(ArchivePath::isPlainEnvironmentFile('subdir/.env.backup'));
         $this->assertFalse(ArchivePath::isPlainEnvironmentFile('configuration.enc'));
+    }
+
+    #[DataProvider('databaseVersions')]
+    public function test_database_versions_are_normalized(string $raw, string $expected): void
+    {
+        $this->assertSame($expected, DatabaseRuntimeInfo::normalizeVersion($raw));
+    }
+
+    public static function databaseVersions(): array
+    {
+        return [
+            ['8.4.0', '8.4.0'],
+            ['8.0.39', '8.0.39'],
+            ['10.11.6-MariaDB', '10.11.6'],
+            ['5.5.5-10.11.6-MariaDB', '10.11.6'],
+            ['3.45.1', '3.45.1'],
+        ];
     }
 
     public function test_cipher_fails_closed_without_backup_key(): void
@@ -120,6 +141,43 @@ class AgentPrimitivesTest extends TestCase
 
         $this->assertStringContainsString('64 caracteres', $errors);
         $this->assertStringContainsString('name no es valido', $errors);
+    }
+
+    #[DataProvider('invalidManifestMutations')]
+    public function test_release_manifest_runtime_rejects_schema_invalid_structures(callable $mutate, string $message): void
+    {
+        $manifest = $this->validManifest();
+        $mutate($manifest);
+
+        $this->assertStringContainsString($message, implode(' ', app(ReleaseManifestValidator::class)->errors($manifest)));
+    }
+
+    public static function invalidManifestMutations(): array
+    {
+        return [
+            'unknown top level' => [fn (array &$manifest) => $manifest['unknown'] = true, 'propiedad desconocida'],
+            'unknown nested' => [fn (array &$manifest) => $manifest['database']['unknown'] = true, 'database contiene la propiedad desconocida'],
+            'healthcheck without slash' => [fn (array &$manifest) => $manifest['healthchecks'] = ['health'], 'comience por /'],
+            'invalid source commit' => [fn (array &$manifest) => $manifest['source_commit'] = 'not-a-sha', '40 caracteres'],
+            'invalid requirements' => [fn (array &$manifest) => $manifest['requirements'] = 'invalid', 'requirements debe ser un objeto'],
+            'invalid database minimum type' => [function (array &$manifest): void {
+                $manifest['requirements'] = ['database' => ['minimum_version' => 845]];
+            }, 'requirements.database.minimum_version'],
+            'invalid variable description' => [function (array &$manifest): void {
+                $manifest['configuration']['new_variables'][] = ['name' => 'NEW_VALUE', 'required' => false, 'sensitive' => false, 'description' => 42];
+            }, 'description debe ser string'],
+            'unsafe package traversal' => [fn (array &$manifest) => $manifest['package_file'] = '../release.zip', 'package_file contiene una ruta insegura'],
+            'unsafe package windows separator' => [fn (array &$manifest) => $manifest['package_file'] = 'dist\\release.zip', 'package_file contiene una ruta insegura'],
+        ];
+    }
+
+    public function test_release_manifest_json_shape_rejects_an_array_instead_of_requirements_object(): void
+    {
+        $manifest = $this->validManifest();
+        $manifest['requirements'] = [];
+        $errors = app(ReleaseManifestValidator::class)->errorsFromJson(json_encode($manifest, JSON_THROW_ON_ERROR));
+
+        $this->assertStringContainsString('requirements debe ser un objeto', implode(' ', $errors));
     }
 
     private function validManifest(): array
