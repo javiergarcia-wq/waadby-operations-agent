@@ -1,0 +1,30 @@
+{
+    "$schema": "https://getcomposer.org/schema.json",
+    "name": "waadby/operations-agent",
+    "description": "Reusable local operations agent for WAADBY Laravel applications.",
+    "type": "library",
+    "license": "MIT",
+    "require": {
+        "php": "^8.3",
+        "illuminate/cache": "^13.0",
+        "illuminate/console": "^13.0",
+        "illuminate/database": "^13.0",
+        "illuminate/filesystem": "^13.0",
+        "illuminate/support": "^13.0",
+        "symfony/process": "^7.3"
+    },
+    "autoload": {
+        "psr-4": {
+            "Waadby\\OperationsAgent\\": "src/"
+        }
+    },
+    "extra": {
+        "laravel": {
+            "providers": [
+                "Waadby\\OperationsAgent\\OperationsAgentServiceProvider"
+            ]
+        }
+    },
+    "minimum-stability": "stable",
+    "prefer-stable": true
+}
