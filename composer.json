@@ -10,8 +10,13 @@
         "illuminate/console": "^13.0",
         "illuminate/database": "^13.0",
         "illuminate/filesystem": "^13.0",
+        "illuminate/http": "^13.0",
+        "illuminate/queue": "^13.0",
+        "illuminate/routing": "^13.0",
         "illuminate/support": "^13.0",
-        "symfony/process": "^7.3"
+        "lcobucci/jwt": "^5.6",
+        "symfony/process": "^7.3",
+        "web-token/jwt-library": "^4.1"
     },
     "autoload": {
         "psr-4": {

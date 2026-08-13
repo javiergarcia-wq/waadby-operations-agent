@@ -10,6 +10,9 @@ class NullOperationsReporter implements OperationsReporter
     /** @var array<string, array<string, mixed>> */
     private array $artifacts = [];
 
+    /** @var array<string, array<string, mixed>> */
+    private array $operations = [];
+
     public function installation(): array
     {
         return [
@@ -23,10 +26,39 @@ class NullOperationsReporter implements OperationsReporter
 
     public function beginOperation(string $type, ?string $idempotencyKey = null, ?int $actorId = null): array
     {
-        return ['public_id' => (string) Str::uuid(), 'operation_type' => $type, 'status' => 'running'];
+        if ($idempotencyKey !== null) {
+            foreach ($this->operations as $operation) {
+                if (($operation['idempotency_key'] ?? null) === $idempotencyKey) {
+                    return $operation;
+                }
+            }
+        }
+        $operation = ['public_id' => (string) Str::uuid(), 'operation_type' => $type, 'status' => 'running', 'idempotency_key' => $idempotencyKey];
+        $this->operations[$operation['public_id']] = $operation;
+
+        return $operation;
     }
 
-    public function finishOperation(string $publicId, string $status, array $summary = [], ?string $errorCode = null, ?string $errorMessageSafe = null): void {}
+    public function queueOperation(string $type, string $idempotencyKey): array
+    {
+        $operation = $this->beginOperation($type, $idempotencyKey);
+        $operation['status'] = 'queued';
+        $this->operations[$operation['public_id']] = $operation;
+
+        return $operation;
+    }
+
+    public function findOperation(string $publicId): ?array
+    {
+        return $this->operations[$publicId] ?? null;
+    }
+
+    public function finishOperation(string $publicId, string $status, array $summary = [], ?string $errorCode = null, ?string $errorMessageSafe = null): void
+    {
+        if (isset($this->operations[$publicId])) {
+            $this->operations[$publicId] = [...$this->operations[$publicId], 'status' => $status, 'summary' => $summary, 'error_code' => $errorCode, 'error_message_safe' => $errorMessageSafe];
+        }
+    }
 
     public function createArtifact(array $attributes): array
     {

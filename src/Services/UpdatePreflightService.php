@@ -15,7 +15,7 @@ class UpdatePreflightService
     ) {}
 
     /** @return array<string, mixed> */
-    public function analyze(string $manifestPath, ?string $idempotencyKey = null, ?int $actorId = null): array
+    public function analyze(string|array $manifestPath, ?string $idempotencyKey = null, ?int $actorId = null): array
     {
         $operation = $this->reporter->beginOperation('update_preflight', $idempotencyKey, $actorId);
         try {
@@ -87,7 +87,7 @@ class UpdatePreflightService
                 }
             }
 
-            if (is_string($manifest['package_file'] ?? null)) {
+            if (is_string($manifestPath) && is_string($manifest['package_file'] ?? null)) {
                 $package = $this->resolvePackagePath($manifestPath, $manifest['package_file']);
                 if (! is_file($package)) {
                     $blockers[] = 'No se encontro el paquete local declarado para verificar su checksum.';
@@ -127,8 +127,13 @@ class UpdatePreflightService
     }
 
     /** @return array{array<string, mixed>, list<string>} */
-    private function read(string $path): array
+    private function read(string|array $path): array
     {
+        if (is_array($path)) {
+            $json = json_encode($path, JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES);
+
+            return [$path, $this->validator->errorsFromJson($json)];
+        }
         if (! is_file($path) || ! is_readable($path)) {
             throw new RuntimeException('No se encontro el release manifest solicitado.');
         }

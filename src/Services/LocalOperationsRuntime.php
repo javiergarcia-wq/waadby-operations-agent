@@ -50,4 +50,9 @@ class LocalOperationsRuntime implements OperationsRuntime
     {
         return $this->updatePreflightService->analyze($manifest, $idempotencyKey, $actorId);
     }
+
+    public function updatePreflightDocument(array $manifest, ?string $idempotencyKey = null, ?int $actorId = null): array
+    {
+        return $this->updatePreflightService->analyze($manifest, $idempotencyKey, $actorId);
+    }
 }
