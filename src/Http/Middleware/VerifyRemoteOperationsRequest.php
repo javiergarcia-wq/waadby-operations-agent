@@ -84,6 +84,7 @@ final class VerifyRemoteOperationsRequest
             hash_equals((string) ($claims['body_sha256'] ?? ''), hash('sha256', $request->getContent())),
             ($claims['correlation_id'] ?? null) === $correlation,
             ($claims['idempotency_key'] ?? '') === $idempotency,
+            ($claims['range'] ?? '') === (string) $request->header('Range', ''),
             ($claims['operation'] ?? null) === $this->operationFor($expectedPath, $request->getMethod()),
             ! $request->isMethod('post') || $idempotency !== '',
         ];
@@ -97,6 +98,7 @@ final class VerifyRemoteOperationsRequest
         return match (true) {
             $method === 'GET' && $path === '/waadby-operations/v1/inventory' => 'inventory',
             $method === 'GET' && preg_match('#^/waadby-operations/v1/operations/[0-9a-f-]{36}$#i', $path) === 1 => 'operation_status',
+            $method === 'GET' && preg_match('#^/waadby-operations/v1/backup/[0-9a-f-]{36}/export$#i', $path) === 1 => 'backup_export',
             $method === 'POST' && $path === '/waadby-operations/v1/backup' => 'backup',
             $method === 'POST' && preg_match('#^/waadby-operations/v1/backup/[0-9a-f-]{36}/verify$#i', $path) === 1 => 'backup_verify',
             $method === 'POST' && $path === '/waadby-operations/v1/restore/preflight' => 'restore_preflight',

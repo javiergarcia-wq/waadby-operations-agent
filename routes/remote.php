@@ -10,6 +10,9 @@ Route::prefix('waadby-operations/v1')->middleware('throttle:waadby-operations-ag
         Route::get('/operations/{operation}', [RemoteOperationsController::class, 'operation']);
     });
 
+    Route::get('/backup/{backup}/export', [RemoteOperationsController::class, 'export'])
+        ->middleware(['throttle:waadby-operations-agent-export', VerifyRemoteOperationsRequest::class]);
+
     Route::middleware(['throttle:waadby-operations-agent-mutations', VerifyRemoteOperationsRequest::class])->group(function (): void {
         Route::post('/backup', [RemoteOperationsController::class, 'backup']);
         Route::post('/backup/{backup}/verify', [RemoteOperationsController::class, 'verify']);

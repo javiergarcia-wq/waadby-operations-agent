@@ -8,6 +8,11 @@ return [
         'version' => env('WAADBY_APPLICATION_VERSION', '0.0.0'),
     ],
     'enabled' => env('ACCESS_OPERATIONS_ENABLED', false),
+    'vault' => [
+        'key' => env('WAADBY_OPERATIONS_VAULT_KEY'),
+        'key_id' => env('WAADBY_OPERATIONS_VAULT_KEY_ID'),
+        'chunk_bytes' => min(8388608, max(1048576, (int) env('ACCESS_OPERATIONS_VAULT_CHUNK_BYTES', 1048576))),
+    ],
     'remote_agent' => [
         'enabled' => env('WAADBY_OPERATIONS_REMOTE_AGENT_ENABLED', false),
         'state_path' => env('WAADBY_OPERATIONS_REMOTE_STATE_PATH', storage_path('app/private/waadby-operations-agent')),
@@ -18,6 +23,7 @@ return [
         'maximum_body_bytes' => min(1048576, max(1024, (int) env('WAADBY_OPERATIONS_REMOTE_MAX_BODY', 262144))),
         'rate_limit_per_minute' => min(600, max(1, (int) env('WAADBY_OPERATIONS_REMOTE_RATE_LIMIT', 120))),
         'mutation_rate_limit_per_minute' => min(120, max(1, (int) env('WAADBY_OPERATIONS_REMOTE_MUTATION_RATE_LIMIT', 20))),
+        'export_rate_limit_per_minute' => min(60, max(1, (int) env('WAADBY_OPERATIONS_REMOTE_EXPORT_RATE_LIMIT', 10))),
         'allow_local_testing_http' => (bool) env('WAADBY_OPERATIONS_REMOTE_ALLOW_LOCAL_HTTP', false),
     ],
     'backup' => [

@@ -14,6 +14,8 @@ use Waadby\OperationsAgent\Console\Commands\RegisterSelfCommand;
 use Waadby\OperationsAgent\Console\Commands\RemoteDisableCommand;
 use Waadby\OperationsAgent\Console\Commands\RestorePreflightCommand;
 use Waadby\OperationsAgent\Console\Commands\UpdatePreflightCommand;
+use Waadby\OperationsAgent\Console\Commands\VaultDecryptFileCommand;
+use Waadby\OperationsAgent\Console\Commands\VaultVerifyFileCommand;
 use Waadby\OperationsAgent\Contracts\OperationsReporter;
 use Waadby\OperationsAgent\Contracts\OperationsRuntime;
 use Waadby\OperationsAgent\Database\DatabaseBackupDriverResolver;
@@ -43,6 +45,9 @@ class OperationsAgentServiceProvider extends ServiceProvider
         RateLimiter::for('waadby-operations-agent-mutations', fn (Request $request): Limit => Limit::perMinute(
             (int) config('waadby_operations.remote_agent.mutation_rate_limit_per_minute', 20),
         )->by((string) $request->ip()));
+        RateLimiter::for('waadby-operations-agent-export', fn (Request $request): Limit => Limit::perMinute(
+            (int) config('waadby_operations.remote_agent.export_rate_limit_per_minute', 10),
+        )->by((string) $request->ip()));
 
         $this->loadRoutesFrom(__DIR__.'/../routes/remote.php');
         $this->publishes([
@@ -59,6 +64,8 @@ class OperationsAgentServiceProvider extends ServiceProvider
                 BackupVerifyCommand::class,
                 RestorePreflightCommand::class,
                 UpdatePreflightCommand::class,
+                VaultVerifyFileCommand::class,
+                VaultDecryptFileCommand::class,
             ]);
         }
     }

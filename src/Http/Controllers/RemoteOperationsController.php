@@ -6,13 +6,15 @@ use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Bus;
 use Illuminate\Support\Str;
+use Symfony\Component\HttpFoundation\Response;
 use Waadby\OperationsAgent\Contracts\OperationsReporter;
 use Waadby\OperationsAgent\Contracts\OperationsRuntime;
 use Waadby\OperationsAgent\Jobs\ExecuteRemoteOperation;
+use Waadby\OperationsAgent\Services\BackupExportService;
 
 final class RemoteOperationsController
 {
-    public function __construct(private readonly OperationsRuntime $runtime, private readonly OperationsReporter $reporter) {}
+    public function __construct(private readonly OperationsRuntime $runtime, private readonly OperationsReporter $reporter, private readonly BackupExportService $exports) {}
 
     public function inventory(): JsonResponse
     {
@@ -31,6 +33,21 @@ final class RemoteOperationsController
         abort_unless(Str::isUuid($backup), 404);
 
         return $this->queue($request, 'backup_verify', ['backup_id' => $backup]);
+    }
+
+    public function export(Request $request, string $backup): Response
+    {
+        abort_unless(Str::isUuid($backup), 404);
+        if ($request->query() !== []) {
+            return response()->json(['error' => ['code' => 'export_query_not_allowed', 'message' => 'La exportación solo admite el UUID del backup.']], 400);
+        }
+        try {
+            return $this->exports->response($backup, $request->header('Range'));
+        } catch (\RuntimeException $exception) {
+            $status = in_array($exception->getCode(), [404, 409, 416], true) ? $exception->getCode() : 409;
+
+            return response()->json(['error' => ['code' => $exception->getMessage(), 'message' => 'El backup no está disponible para exportación.']], $status);
+        }
     }
 
     public function restorePreflight(Request $request): JsonResponse
