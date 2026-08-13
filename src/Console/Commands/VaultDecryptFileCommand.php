@@ -3,7 +3,9 @@
 namespace Waadby\OperationsAgent\Console\Commands;
 
 use Illuminate\Console\Command;
+use InvalidArgumentException;
 use Throwable;
+use Waadby\OperationsAgent\Support\PrivateRecoveryPathPolicy;
 use Waadby\OperationsAgent\Vault\VaultEnvelopeCipher;
 
 final class VaultDecryptFileCommand extends Command
@@ -12,7 +14,7 @@ final class VaultDecryptFileCommand extends Command
 
     protected $description = 'Descifra un envelope Vault a un ZIP sin extraerlo y sin depender de la base de datos';
 
-    public function handle(VaultEnvelopeCipher $cipher): int
+    public function handle(VaultEnvelopeCipher $cipher, PrivateRecoveryPathPolicy $pathPolicy): int
     {
         $input = $this->absolute((string) $this->argument('file'));
         $configuredOutput = $this->option('output');
@@ -21,14 +23,11 @@ final class VaultDecryptFileCommand extends Command
 
             return self::FAILURE;
         }
-        $output = $this->absolute($configuredOutput);
-        if ($this->insidePublic($output)) {
-            $this->error('El output descifrado no puede escribirse dentro de public/.');
-
-            return self::FAILURE;
-        }
-        if (file_exists($output) && ! $this->option('force')) {
-            $this->error('El output ya existe; use --force únicamente tras verificar el destino.');
+        $force = (bool) $this->option('force');
+        try {
+            $output = $pathPolicy->resolve($configuredOutput, getcwd() ?: base_path(), public_path(), $force);
+        } catch (InvalidArgumentException $exception) {
+            $this->error($exception->getMessage());
 
             return self::FAILURE;
         }
@@ -37,9 +36,16 @@ final class VaultDecryptFileCommand extends Command
 
             return self::FAILURE;
         }
+        try {
+            $output = $pathPolicy->resolve($output, getcwd() ?: base_path(), public_path(), $force);
+        } catch (InvalidArgumentException $exception) {
+            $this->error($exception->getMessage());
+
+            return self::FAILURE;
+        }
         $temporary = $output.'.'.bin2hex(random_bytes(6)).'.tmp';
         $source = is_file($input) ? fopen($input, 'rb') : false;
-        $destination = fopen($temporary, 'x+b');
+        $destination = @fopen($temporary, 'x+b');
         if ($source === false || $destination === false) {
             $this->close($source);
             $this->close($destination);
@@ -48,7 +54,14 @@ final class VaultDecryptFileCommand extends Command
 
             return self::FAILURE;
         }
-        @chmod($temporary, 0600);
+        if (! $this->restrictPermissions($temporary)) {
+            $this->close($source);
+            $this->close($destination);
+            @unlink($temporary);
+            $this->error('No se pudieron aplicar permisos privados al fichero temporal.');
+
+            return self::FAILURE;
+        }
         $failure = null;
         try {
             $result = $cipher->decrypt($source, $destination, (string) config('waadby_operations.vault.key'));
@@ -65,7 +78,15 @@ final class VaultDecryptFileCommand extends Command
 
             return self::FAILURE;
         }
-        if (file_exists($output) && ! @unlink($output)) {
+        try {
+            $pathPolicy->assertExistingOutputSafe($output, $force);
+        } catch (InvalidArgumentException $exception) {
+            @unlink($temporary);
+            $this->error($exception->getMessage());
+
+            return self::FAILURE;
+        }
+        if ($pathPolicy->pathExists($output) && ! @unlink($output)) {
             @unlink($temporary);
             $this->error('No se pudo reemplazar el output solicitado.');
 
@@ -77,7 +98,12 @@ final class VaultDecryptFileCommand extends Command
 
             return self::FAILURE;
         }
-        @chmod($output, 0600);
+        if (! $this->restrictPermissions($output)) {
+            @unlink($output);
+            $this->error('No se pudieron conservar permisos privados en el ZIP descifrado.');
+
+            return self::FAILURE;
+        }
         $this->info('ZIP descifrado y verificado: '.$result['source_size'].' bytes · SHA-256 '.$result['source_sha256']);
 
         return self::SUCCESS;
@@ -88,12 +114,17 @@ final class VaultDecryptFileCommand extends Command
         return preg_match('~^(?:[A-Za-z]:[\\\\/]|/)~', $path) ? $path : getcwd().DIRECTORY_SEPARATOR.$path;
     }
 
-    private function insidePublic(string $path): bool
+    private function restrictPermissions(string $path): bool
     {
-        $public = rtrim(str_replace('\\', '/', realpath(public_path()) ?: public_path()), '/').'/';
-        $candidate = str_replace('\\', '/', dirname($path)).'/';
+        if (! @chmod($path, 0600)) {
+            return false;
+        }
+        if (DIRECTORY_SEPARATOR === '\\') {
+            return true;
+        }
+        clearstatcache(true, $path);
 
-        return str_starts_with($candidate, $public);
+        return (fileperms($path) & 0777) === 0600;
     }
 
     private function close(mixed $resource): void
