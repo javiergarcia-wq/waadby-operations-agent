@@ -2,6 +2,9 @@
 
 namespace Waadby\OperationsAgent;
 
+use Illuminate\Cache\RateLimiting\Limit;
+use Illuminate\Http\Request;
+use Illuminate\Support\Facades\RateLimiter;
 use Illuminate\Support\ServiceProvider;
 use Waadby\OperationsAgent\Console\Commands\BackupCommand;
 use Waadby\OperationsAgent\Console\Commands\BackupVerifyCommand;
@@ -34,6 +37,13 @@ class OperationsAgentServiceProvider extends ServiceProvider
 
     public function boot(): void
     {
+        RateLimiter::for('waadby-operations-agent', fn (Request $request): Limit => Limit::perMinute(
+            (int) config('waadby_operations.remote_agent.rate_limit_per_minute', 120),
+        )->by((string) $request->ip()));
+        RateLimiter::for('waadby-operations-agent-mutations', fn (Request $request): Limit => Limit::perMinute(
+            (int) config('waadby_operations.remote_agent.mutation_rate_limit_per_minute', 20),
+        )->by((string) $request->ip()));
+
         $this->loadRoutesFrom(__DIR__.'/../routes/remote.php');
         $this->publishes([
             __DIR__.'/../config/waadby_operations.php' => config_path('waadby_operations.php'),

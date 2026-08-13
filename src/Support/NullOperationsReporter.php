@@ -19,7 +19,7 @@ class NullOperationsReporter implements OperationsReporter
             'public_id' => (string) Str::uuid(),
             'application_code' => (string) config('waadby_operations.application.code'),
             'name' => (string) config('waadby_operations.application.name'),
-            'environment' => app()->environment(),
+            'environment' => (string) config('waadby_operations.application.environment'),
             'driver' => 'self',
         ];
     }

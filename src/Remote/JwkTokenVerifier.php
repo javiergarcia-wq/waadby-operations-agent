@@ -45,4 +45,31 @@ final class JwkTokenVerifier
     {
         return $value instanceof DateTimeImmutable ? $value->getTimestamp() : (int) $value;
     }
+
+    /** @param array<string, mixed> $claims */
+    public function assertTemporalClaims(array $claims, int $maximumTtlSeconds, int $clockSkewSeconds, ?int $now = null): void
+    {
+        foreach (['iat', 'nbf', 'exp'] as $claim) {
+            if (! isset($claims[$claim]) || (! is_int($claims[$claim]) && ! $claims[$claim] instanceof DateTimeImmutable)) {
+                throw new RuntimeException('temporal_claims_invalid');
+            }
+        }
+
+        $now ??= time();
+        $iat = self::timestamp($claims['iat']);
+        $nbf = self::timestamp($claims['nbf']);
+        $exp = self::timestamp($claims['exp']);
+        if ($iat > $now + $clockSkewSeconds) {
+            throw new RuntimeException('issued_in_future');
+        }
+        if ($nbf > $now + $clockSkewSeconds) {
+            throw new RuntimeException('not_yet_valid');
+        }
+        if ($exp < $now - $clockSkewSeconds) {
+            throw new RuntimeException('token_expired');
+        }
+        if ($exp <= $iat || $exp - $iat > $maximumTtlSeconds) {
+            throw new RuntimeException('token_ttl_invalid');
+        }
+    }
 }

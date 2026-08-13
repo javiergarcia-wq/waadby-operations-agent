@@ -51,12 +51,20 @@ final class EnrollmentStore
     public function isReady(): bool
     {
         $identity = $this->get();
+        $applicationCode = (string) config('waadby_operations.application.code');
+        $environment = (string) config('waadby_operations.application.environment');
 
         return is_array($identity)
             && ! isset($identity['locally_disabled_at'])
             && filled($identity['installation_id'] ?? null)
             && filled($identity['access_origin'] ?? null)
-            && is_array($identity['jwks'] ?? null);
+            && is_array($identity['jwks'] ?? null)
+            && $applicationCode !== ''
+            && $environment !== ''
+            && is_string($identity['application_code'] ?? null)
+            && is_string($identity['environment'] ?? null)
+            && hash_equals($applicationCode, $identity['application_code'])
+            && hash_equals($environment, $identity['environment']);
     }
 
     public function path(): string

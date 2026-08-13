@@ -6,6 +6,7 @@ use Closure;
 use Illuminate\Cache\CacheManager;
 use Illuminate\Http\Request;
 use Symfony\Component\HttpFoundation\Response;
+use Waadby\OperationsAgent\Contracts\OperationsReporter;
 use Waadby\OperationsAgent\Remote\EnrollmentStore;
 use Waadby\OperationsAgent\Remote\JwkTokenVerifier;
 
@@ -15,6 +16,7 @@ final class VerifyRemoteOperationsRequest
         private readonly EnrollmentStore $enrollment,
         private readonly JwkTokenVerifier $verifier,
         private readonly CacheManager $cache,
+        private readonly OperationsReporter $reporter,
     ) {}
 
     public function handle(Request $request, Closure $next): Response
@@ -27,10 +29,14 @@ final class VerifyRemoteOperationsRequest
         }
         $authorization = (string) $request->header('Authorization');
         if (! str_starts_with($authorization, 'Signature ')) {
-            return $this->denied('signature_required');
+            return $this->denied($request, 'signature_required');
         }
+        $identity = null;
         try {
             $identity = $this->enrollment->get();
+            if (! is_array($identity)) {
+                throw new \RuntimeException('enrollment_unavailable');
+            }
             $claims = $this->verifier->verify(substr($authorization, 10), $identity['jwks']);
             $this->assertClaims($request, $claims, $identity);
             $storeName = config('waadby_operations.remote_agent.replay_store');
@@ -45,7 +51,11 @@ final class VerifyRemoteOperationsRequest
             }
             $request->attributes->set('waadby_operations_claims', $claims);
         } catch (\RuntimeException $exception) {
-            return $this->denied($exception->getMessage());
+            $code = in_array($exception->getMessage(), ['request_replayed', 'replay_store_unavailable', 'signature_claims_invalid'], true)
+                ? $exception->getMessage()
+                : 'signature_invalid';
+
+            return $this->denied($request, $code, $identity);
         }
 
         return $next($request);
@@ -54,11 +64,12 @@ final class VerifyRemoteOperationsRequest
     /** @param array<string, mixed> $claims @param array<string, mixed> $identity */
     private function assertClaims(Request $request, array $claims, array $identity): void
     {
-        $now = time();
         $skew = (int) config('waadby_operations.remote_agent.clock_skew_seconds', 30);
-        $iat = JwkTokenVerifier::timestamp($claims['iat'] ?? 0);
-        $nbf = JwkTokenVerifier::timestamp($claims['nbf'] ?? $iat);
-        $exp = JwkTokenVerifier::timestamp($claims['exp'] ?? 0);
+        $this->verifier->assertTemporalClaims(
+            $claims,
+            (int) config('waadby_operations.remote_agent.maximum_token_ttl_seconds', 60),
+            $skew,
+        );
         $audience = is_array($claims['aud'] ?? null) ? ($claims['aud'][0] ?? '') : ($claims['aud'] ?? '');
         $expectedAudience = 'urn:waadby:operations:installation:'.$identity['installation_id'];
         $expectedPath = '/'.$request->path();
@@ -68,8 +79,6 @@ final class VerifyRemoteOperationsRequest
             ($claims['iss'] ?? null) === $identity['access_origin'],
             $audience === $expectedAudience,
             is_string($claims['jti'] ?? null) && $claims['jti'] !== '',
-            $iat <= $now + $skew && $nbf <= $now + $skew && $exp >= $now - $skew,
-            $exp > $iat && $exp - $iat <= (int) config('waadby_operations.remote_agent.maximum_token_ttl_seconds', 60),
             strtoupper((string) ($claims['method'] ?? '')) === $request->getMethod(),
             ($claims['path'] ?? null) === $expectedPath,
             hash_equals((string) ($claims['body_sha256'] ?? ''), hash('sha256', $request->getContent())),
@@ -96,8 +105,22 @@ final class VerifyRemoteOperationsRequest
         };
     }
 
-    private function denied(string $code): Response
+    /** @param array<string, mixed>|null $identity */
+    private function denied(Request $request, string $code, ?array $identity = null): Response
     {
+        try {
+            $path = preg_replace('#[^A-Za-z0-9/_\-.]#', '', '/'.ltrim($request->path(), '/')) ?: '/';
+            $this->reporter->audit('operations.remote.signature_rejected', [
+                'reason_code' => $code,
+                'timestamp' => now()->utc()->toIso8601String(),
+                'installation_public_id' => is_string($identity['installation_id'] ?? null) ? $identity['installation_id'] : null,
+                'request_method' => strtoupper($request->getMethod()),
+                'request_path' => substr($path, 0, 255),
+            ]);
+        } catch (\Throwable) {
+            // Rejection auditing is best-effort and must never weaken fail-closed authentication.
+        }
+
         return response()->json(['error' => ['code' => $code, 'message' => 'La solicitud firmada no es válida.']], 401);
     }
 }

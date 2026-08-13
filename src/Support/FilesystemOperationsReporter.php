@@ -34,7 +34,7 @@ final class FilesystemOperationsReporter implements OperationsReporter
             'public_id' => $localId,
             'application_code' => (string) config('waadby_operations.application.code'),
             'name' => (string) config('waadby_operations.application.name'),
-            'environment' => $identity['environment'] ?? app()->environment(),
+            'environment' => (string) config('waadby_operations.application.environment'),
             'driver' => 'agent',
         ];
     }

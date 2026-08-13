@@ -41,7 +41,7 @@ class InventoryService
         return [
             'application_code' => (string) config('waadby_operations.application.code'),
             'application_name' => (string) config('waadby_operations.application.name'),
-            'environment' => $this->application->environment(),
+            'environment' => (string) config('waadby_operations.application.environment'),
             'application_version' => (string) config('waadby_operations.application.version'),
             'git_commit' => $this->gitCommit(),
             'php_version' => PHP_VERSION,

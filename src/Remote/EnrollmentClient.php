@@ -39,21 +39,38 @@ final class EnrollmentClient
         $claims = $this->verifier->verify($payload['document'], $jwks);
         $installationId = (string) ($claims['installation_public_id'] ?? '');
         $audience = is_array($claims['aud'] ?? null) ? ($claims['aud'][0] ?? '') : (string) ($claims['aud'] ?? '');
-        $now = time();
+        try {
+            $this->verifier->assertTemporalClaims(
+                $claims,
+                (int) config('waadby_operations.remote_agent.enrollment_document_maximum_ttl_seconds', 300),
+                (int) config('waadby_operations.remote_agent.clock_skew_seconds', 30),
+            );
+        } catch (RuntimeException) {
+            throw new RuntimeException('El documento firmado de enrollment no es válido.');
+        }
         if (($claims['iss'] ?? null) !== $origin
             || $installationId === ''
             || $audience !== 'urn:waadby:operations:installation:'.$installationId
-            || JwkTokenVerifier::timestamp($claims['exp'] ?? 0) < $now
             || ($claims['operations_issuer'] ?? null) !== $origin
             || ($claims['jwks_uri'] ?? null) !== $payload['jwks_uri']
             || ($claims['audience'] ?? null) !== $audience
             || ($claims['protocol_version'] ?? null) !== '1') {
             throw new RuntimeException('El documento firmado de enrollment no es válido.');
         }
+        $applicationCode = $claims['application_code'] ?? null;
+        $localApplicationCode = (string) config('waadby_operations.application.code');
+        if (! is_string($applicationCode) || $applicationCode === '' || $localApplicationCode === '' || ! hash_equals($localApplicationCode, $applicationCode)) {
+            throw new RuntimeException('El código de aplicación del enrollment no coincide con esta aplicación.');
+        }
+        $environment = $claims['environment'] ?? null;
+        $localEnvironment = (string) config('waadby_operations.application.environment');
+        if (! is_string($environment) || $environment === '' || $localEnvironment === '' || ! hash_equals($localEnvironment, $environment)) {
+            throw new RuntimeException('El entorno del enrollment no coincide con esta aplicación.');
+        }
         $identity = [
             'installation_id' => $installationId,
-            'application_code' => $claims['application_code'] ?? null,
-            'environment' => $claims['environment'] ?? null,
+            'application_code' => $applicationCode,
+            'environment' => $environment,
             'access_origin' => $origin,
             'issuer' => $origin,
             'audience' => $audience,
