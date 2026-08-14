@@ -3,9 +3,12 @@
 namespace Waadby\OperationsAgent\Updates;
 
 use RuntimeException;
+use Waadby\OperationsAgent\Support\OperationsPrivateStoragePathPolicy;
 
 final class InstalledReleaseStore
 {
+    public function __construct(private readonly OperationsPrivateStoragePathPolicy $privateStorage) {}
+
     /** @return array<string, mixed>|null */
     public function read(): ?array
     {
@@ -39,28 +42,24 @@ final class InstalledReleaseStore
             }
         }
         $path = $this->path();
-        $directory = dirname($path);
-        if (! is_dir($directory) && ! mkdir($directory, 0700, true) && ! is_dir($directory)) {
-            throw new RuntimeException('No se pudo crear el directorio privado del estado instalado.');
-        }
         $temporary = $path.'.tmp-'.bin2hex(random_bytes(8));
         $json = json_encode($state, JSON_THROW_ON_ERROR | JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES)."\n";
         if (file_put_contents($temporary, $json, LOCK_EX) !== strlen($json)) {
             @unlink($temporary);
             throw new RuntimeException('No se pudo escribir el estado instalado completo.');
         }
-        @chmod($temporary, 0600);
+        $this->privateStorage->protectFile($temporary);
         if (! @rename($temporary, $path)) {
-            @unlink($path);
-            if (! @rename($temporary, $path)) {
-                @unlink($temporary);
-                throw new RuntimeException('No se pudo publicar atomically el estado instalado.');
-            }
+            @unlink($temporary);
+            throw new RuntimeException('No se pudo publicar atomically el estado instalado.');
         }
+        $this->privateStorage->protectFile($path);
     }
 
     public function path(): string
     {
-        return (string) config('waadby_operations.updates.state_path', storage_path('app/private/waadby-operations/installed-release.json'));
+        return $this->privateStorage->prepareFile(
+            (string) config('waadby_operations.updates.state_path', storage_path('app/private/waadby-operations/installed-release.json')),
+        );
     }
 }

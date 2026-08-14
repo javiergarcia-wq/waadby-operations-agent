@@ -3,23 +3,32 @@
 namespace Waadby\OperationsAgent\Updates;
 
 use RuntimeException;
+use Waadby\OperationsAgent\Support\OperationsPrivateStoragePathPolicy;
 
 final class CodeSnapshotService
 {
-    public function __construct(private readonly ReleaseCanonicalizer $canonicalizer, private readonly ReleasePathPolicy $paths, private readonly InstalledReleaseStore $installedRelease, private readonly UpdateDestinationPathPolicy $destinations) {}
+    public function __construct(
+        private readonly ReleaseCanonicalizer $canonicalizer,
+        private readonly ReleasePathPolicy $paths,
+        private readonly InstalledReleaseStore $installedRelease,
+        private readonly UpdateDestinationPathPolicy $destinations,
+        private readonly OperationsPrivateStoragePathPolicy $privateStorage,
+    ) {}
 
     /** @param list<array{path:string,sha256:string,size:int,operation:string}> $files
      * @return array{path:string,sha256:string,manifest:array<string,mixed>}
      */
     public function create(string $root, string $sessionId, array $files): array
     {
-        $directory = rtrim((string) config('waadby_operations.updates.snapshot_path', storage_path('app/private/waadby-operations/snapshots')), '/\\').DIRECTORY_SEPARATOR.$sessionId;
-        if (file_exists($directory)) {
+        $configuredRoot = (string) config('waadby_operations.updates.snapshot_path', storage_path('app/private/waadby-operations/snapshots'));
+        $rootDirectory = $this->privateStorage->prepareDirectory($configuredRoot);
+        $candidate = $rootDirectory.DIRECTORY_SEPARATOR.$sessionId;
+        $existed = file_exists($candidate) || is_link($candidate);
+        $directory = $this->privateStorage->prepareChildDirectory($rootDirectory, $sessionId);
+        if ($existed) {
             throw new RuntimeException('Ya existe un snapshot para la sesion de update.');
         }
-        if (! mkdir($directory.DIRECTORY_SEPARATOR.'files', 0700, true) && ! is_dir($directory.DIRECTORY_SEPARATOR.'files')) {
-            throw new RuntimeException('No se pudo crear el snapshot privado.');
-        }
+        $this->privateStorage->prepareChildDirectory($directory, 'files');
         $entries = [];
         foreach ($files as $file) {
             $relative = $this->paths->assertSafe($file['path']);
@@ -33,6 +42,7 @@ final class CodeSnapshotService
                     throw new RuntimeException('No se pudo copiar un original al snapshot.');
                 }
                 @chmod($target, 0600);
+                $this->privateStorage->protectFile($target);
                 $entry['sha256'] = hash_file('sha256', $target);
                 $entry['size'] = filesize($target);
             }
@@ -49,12 +59,16 @@ final class CodeSnapshotService
             $state['sha256'] = hash_file('sha256', $stateTarget);
             $state['size'] = filesize($stateTarget);
             @chmod($stateTarget, 0600);
+            $this->privateStorage->protectFile($stateTarget);
         }
         $manifest = ['snapshot_version' => 1, 'session_id' => $sessionId, 'files' => $entries, 'installed_release' => $state];
         $sha = hash('sha256', $this->canonicalizer->json($manifest));
         $json = json_encode([...$manifest, 'snapshot_sha256' => $sha], JSON_THROW_ON_ERROR | JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES)."\n";
-        file_put_contents($directory.DIRECTORY_SEPARATOR.'snapshot.json', $json, LOCK_EX);
-        @chmod($directory.DIRECTORY_SEPARATOR.'snapshot.json', 0600);
+        $manifestPath = $directory.DIRECTORY_SEPARATOR.'snapshot.json';
+        if (file_put_contents($manifestPath, $json, LOCK_EX) !== strlen($json)) {
+            throw new RuntimeException('No se pudo escribir el manifest privado del snapshot.');
+        }
+        $this->privateStorage->protectFile($manifestPath);
         $this->verify($directory, $sha);
 
         return ['path' => $directory, 'sha256' => $sha, 'manifest' => $manifest];
@@ -63,8 +77,13 @@ final class CodeSnapshotService
     /** @return array<string, mixed> */
     public function verify(string $directory, string $expectedSha): array
     {
+        $directory = $this->privateStorage->assertExistingDirectoryWithinRoot(
+            (string) config('waadby_operations.updates.snapshot_path', storage_path('app/private/waadby-operations/snapshots')),
+            $directory,
+        );
+        $manifestPath = $this->privateStorage->assertFileWithinRoot($directory, $directory.DIRECTORY_SEPARATOR.'snapshot.json', true);
         try {
-            $document = json_decode((string) file_get_contents($directory.DIRECTORY_SEPARATOR.'snapshot.json'), true, 64, JSON_THROW_ON_ERROR);
+            $document = json_decode((string) file_get_contents($manifestPath), true, 64, JSON_THROW_ON_ERROR);
         } catch (\Throwable $exception) {
             throw new RuntimeException('El snapshot no contiene un manifest verificable.', 0, $exception);
         }
@@ -82,13 +101,14 @@ final class CodeSnapshotService
                 continue;
             }
             $path = $directory.DIRECTORY_SEPARATOR.'files'.DIRECTORY_SEPARATOR.str_replace('/', DIRECTORY_SEPARATOR, $entry['path']);
+            $path = $this->privateStorage->assertFileWithinRoot($directory, $path, true);
             if (! is_file($path) || filesize($path) !== $entry['size'] || ! hash_equals((string) $entry['sha256'], hash_file('sha256', $path))) {
                 throw new RuntimeException('Un fichero del snapshot esta corrupto.');
             }
         }
         $state = $document['installed_release'] ?? [];
         if (($state['existed'] ?? false) === true) {
-            $path = $directory.DIRECTORY_SEPARATOR.'installed-release.json';
+            $path = $this->privateStorage->assertFileWithinRoot($directory, $directory.DIRECTORY_SEPARATOR.'installed-release.json', true);
             if (! is_file($path) || filesize($path) !== $state['size'] || ! hash_equals((string) $state['sha256'], hash_file('sha256', $path))) {
                 throw new RuntimeException('El estado instalado del snapshot esta corrupto.');
             }
@@ -139,6 +159,7 @@ final class CodeSnapshotService
             @unlink($temporary);
             throw new RuntimeException('El fichero restaurado no supera SHA-256.');
         }
+        $this->privateStorage->protectFile($target);
     }
 
     private function replaceReleaseFile(string $root, string $relative, string $source, string $sha): void
@@ -164,8 +185,6 @@ final class CodeSnapshotService
 
     private function directory(string $path): void
     {
-        if (! is_dir($path) && ! mkdir($path, 0700, true) && ! is_dir($path)) {
-            throw new RuntimeException('No se pudo crear un directorio privado de rollback.');
-        }
+        $this->privateStorage->prepareDirectory($path);
     }
 }

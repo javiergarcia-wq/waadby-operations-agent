@@ -4,17 +4,17 @@ namespace Waadby\OperationsAgent\Updates;
 
 use Illuminate\Support\Str;
 use RuntimeException;
+use Waadby\OperationsAgent\Support\OperationsPrivateStoragePathPolicy;
 
 final class UpdateSessionStore
 {
+    public function __construct(private readonly OperationsPrivateStoragePathPolicy $privateStorage) {}
+
     /** @param array<string, mixed> $metadata @return array<string, mixed> */
     public function create(array $metadata): array
     {
         $sessionId = (string) Str::uuid();
-        $directory = $this->directory($sessionId);
-        if (! mkdir($directory, 0700, true) && ! is_dir($directory)) {
-            throw new RuntimeException('No se pudo crear la sesion privada de update.');
-        }
+        $directory = $this->directory($sessionId, true);
         $state = [
             'session_id' => $sessionId,
             'installation_id' => $metadata['installation_id'],
@@ -57,6 +57,7 @@ final class UpdateSessionStore
                 flock($handle, LOCK_UN);
                 fclose($handle);
             }
+            $this->privateStorage->protectFile($this->packagePath($sessionId));
             $state['received_bytes'] += strlen($body);
             $state['next_chunk_index']++;
             $state['status'] = 'transferring';
@@ -93,17 +94,22 @@ final class UpdateSessionStore
 
     public function packagePath(string $sessionId): string
     {
-        return $this->directory($sessionId).DIRECTORY_SEPARATOR.'package.zip';
+        $directory = $this->directory($sessionId);
+
+        return $this->privateStorage->assertFileWithinRoot($directory, $directory.DIRECTORY_SEPARATOR.'package.zip');
     }
 
     /** @param callable(array<string,mixed>&):void $callback @return array<string, mixed> */
     private function mutate(string $sessionId, callable $callback): array
     {
         $this->assertId($sessionId);
-        $lock = fopen($this->directory($sessionId).DIRECTORY_SEPARATOR.'session.lock', 'c+b');
+        $directory = $this->directory($sessionId);
+        $lockPath = $this->privateStorage->assertFileWithinRoot($directory, $directory.DIRECTORY_SEPARATOR.'session.lock');
+        $lock = fopen($lockPath, 'c+b');
         if ($lock === false || ! flock($lock, LOCK_EX)) {
             throw new RuntimeException('No se pudo bloquear la sesion de update.');
         }
+        $this->privateStorage->protectFile($lockPath);
         try {
             $state = $this->get($sessionId, true);
             $callback($state);
@@ -126,13 +132,12 @@ final class UpdateSessionStore
         if (file_put_contents($temporary, $json, LOCK_EX) !== strlen($json)) {
             throw new RuntimeException('No se pudo escribir la sesion de update.');
         }
-        @chmod($temporary, 0600);
-        if (is_file($path)) {
-            @unlink($path);
-        }
+        $this->privateStorage->protectFile($temporary);
         if (! @rename($temporary, $path)) {
+            @unlink($temporary);
             throw new RuntimeException('No se pudo publicar la sesion de update.');
         }
+        $this->privateStorage->protectFile($path);
     }
 
     /** @param array<string, mixed> $state @return array<string, mixed> */
@@ -141,16 +146,23 @@ final class UpdateSessionStore
         return collect($state)->only(['session_id', 'installation_id', 'release_metadata', 'expected_sha', 'expected_size', 'received_bytes', 'next_chunk_index', 'status', 'created_at', 'updated_at', 'result'])->all();
     }
 
-    private function directory(string $sessionId): string
+    private function directory(string $sessionId, bool $create = false): string
     {
         $this->assertId($sessionId);
+        $root = (string) config('waadby_operations.remote_agent.state_path');
 
-        return rtrim((string) config('waadby_operations.remote_agent.state_path'), '/\\').DIRECTORY_SEPARATOR.'updates'.DIRECTORY_SEPARATOR.$sessionId;
+        $updates = $this->privateStorage->prepareChildDirectory($root, 'updates');
+
+        return $create
+            ? $this->privateStorage->prepareChildDirectory($updates, $sessionId)
+            : $this->privateStorage->existingChildDirectory($updates, $sessionId);
     }
 
     private function statePath(string $sessionId): string
     {
-        return $this->directory($sessionId).DIRECTORY_SEPARATOR.'session.json';
+        $directory = $this->directory($sessionId);
+
+        return $this->privateStorage->assertFileWithinRoot($directory, $directory.DIRECTORY_SEPARATOR.'session.json');
     }
 
     private function assertId(string $sessionId): void

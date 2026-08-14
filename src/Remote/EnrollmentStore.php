@@ -4,10 +4,14 @@ namespace Waadby\OperationsAgent\Remote;
 
 use Illuminate\Filesystem\Filesystem;
 use RuntimeException;
+use Waadby\OperationsAgent\Support\OperationsPrivateStoragePathPolicy;
 
 final class EnrollmentStore
 {
-    public function __construct(private readonly Filesystem $files) {}
+    public function __construct(
+        private readonly Filesystem $files,
+        private readonly OperationsPrivateStoragePathPolicy $privateStorage,
+    ) {}
 
     /** @return array<string, mixed>|null */
     public function get(): ?array
@@ -29,16 +33,16 @@ final class EnrollmentStore
     /** @param array<string, mixed> $identity */
     public function put(array $identity): void
     {
-        $directory = dirname($this->path());
-        $this->files->ensureDirectoryExists($directory, 0700, true);
-        $temporary = $this->path().'.'.bin2hex(random_bytes(6)).'.tmp';
+        $path = $this->path();
+        $temporary = $path.'.'.bin2hex(random_bytes(6)).'.tmp';
         $json = json_encode($identity, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR);
         $this->files->put($temporary, $json, true);
-        @chmod($temporary, 0600);
-        if (! @rename($temporary, $this->path())) {
+        $this->privateStorage->protectFile($temporary);
+        if (! @rename($temporary, $path)) {
             @unlink($temporary);
             throw new RuntimeException('No se pudo guardar atómicamente el enrollment local.');
         }
+        $this->privateStorage->protectFile($path);
     }
 
     public function disable(): void
@@ -50,7 +54,11 @@ final class EnrollmentStore
 
     public function isReady(): bool
     {
-        $identity = $this->get();
+        try {
+            $identity = $this->get();
+        } catch (RuntimeException) {
+            return false;
+        }
         $applicationCode = (string) config('waadby_operations.application.code');
         $environment = (string) config('waadby_operations.application.environment');
 
@@ -69,6 +77,8 @@ final class EnrollmentStore
 
     public function path(): string
     {
-        return rtrim((string) config('waadby_operations.remote_agent.state_path'), DIRECTORY_SEPARATOR).DIRECTORY_SEPARATOR.'enrollment.json';
+        $root = $this->privateStorage->prepareDirectory((string) config('waadby_operations.remote_agent.state_path'));
+
+        return $this->privateStorage->assertFileWithinRoot($root, $root.DIRECTORY_SEPARATOR.'enrollment.json');
     }
 }

@@ -8,6 +8,7 @@ use Illuminate\Http\Client\Factory;
 use RuntimeException;
 use Symfony\Component\Process\Process;
 use Waadby\OperationsAgent\Services\UpdatePreflightService;
+use Waadby\OperationsAgent\Support\OperationsPrivateStoragePathPolicy;
 
 final class UpdateExecutor
 {
@@ -20,6 +21,7 @@ final class UpdateExecutor
         private readonly CodeSnapshotService $snapshots,
         private readonly CodeApplyService $code,
         private readonly InstalledReleaseStore $installedRelease,
+        private readonly OperationsPrivateStoragePathPolicy $privateStorage,
     ) {}
 
     /** @param array<string, mixed> $manifest @param array<string, mixed> $signature @param array<string, mixed> $context
@@ -54,7 +56,7 @@ final class UpdateExecutor
         $migrationBatch = null;
         $snapshot = null;
         $root = (string) ($context['root'] ?? base_path());
-        $staging = rtrim((string) config('waadby_operations.updates.staging_path', storage_path('app/private/waadby-operations/releases')), '/\\').DIRECTORY_SEPARATOR.$sessionId;
+        $staging = null;
         $emit = function (string $name, array $data = []) use ($context, &$phase): void {
             $phase = $name;
             if (isset($context['on_phase']) && is_callable($context['on_phase'])) {
@@ -78,6 +80,10 @@ final class UpdateExecutor
                 throw new RuntimeException('Produccion exige una VaultReplica VERIFIED del backup PRE-UPDATE especifico.');
             }
 
+            $staging = $this->privateStorage->prepareChildDirectory(
+                (string) config('waadby_operations.updates.staging_path', storage_path('app/private/waadby-operations/releases')),
+                $sessionId,
+            );
             $emit('staged');
             $this->packages->extract($packagePath, $staging, $verified['files']);
             $snapshot = $this->snapshots->create($root, $sessionId, $verified['files']);
