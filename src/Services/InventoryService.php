@@ -7,6 +7,7 @@ use Illuminate\Database\DatabaseManager;
 use Illuminate\Filesystem\FilesystemManager;
 use Illuminate\Support\Facades\Schema;
 use Symfony\Component\Process\Process;
+use Waadby\OperationsAgent\Updates\InstalledReleaseStore;
 
 class InventoryService
 {
@@ -15,6 +16,7 @@ class InventoryService
         private readonly DatabaseManager $database,
         private readonly FilesystemManager $filesystems,
         private readonly DatabaseRuntimeInfo $databaseInfo,
+        private readonly InstalledReleaseStore $installedRelease,
     ) {}
 
     /** @return array<string, mixed> */
@@ -38,12 +40,14 @@ class InventoryService
         $disk = (string) config('waadby_operations.backup.disk', 'local');
         $persistentPaths = array_values(array_filter((array) config('waadby_operations.backup.persistent_paths', []), 'is_string'));
 
+        $installed = $this->installedRelease->read();
+
         return [
             'application_code' => (string) config('waadby_operations.application.code'),
             'application_name' => (string) config('waadby_operations.application.name'),
             'environment' => (string) config('waadby_operations.application.environment'),
-            'application_version' => (string) config('waadby_operations.application.version'),
-            'git_commit' => $this->gitCommit(),
+            'application_version' => (string) ($installed['version'] ?? config('waadby_operations.application.version')),
+            'git_commit' => $installed['source_commit'] ?? $this->gitCommit(),
             'php_version' => PHP_VERSION,
             'laravel_version' => $this->application->version(),
             'database_driver' => (string) $connection->getDriverName(),
@@ -62,8 +66,9 @@ class InventoryService
             ],
             'update_capabilities' => [
                 'preflight' => true,
-                'apply' => false,
-                'rollback' => false,
+                'apply' => (bool) config('waadby_operations.updates.apply_enabled', false),
+                'rollback' => (bool) config('waadby_operations.updates.apply_enabled', false),
+                'agent_version' => '1.1.0',
             ],
             'timestamp' => now()->utc()->toIso8601String(),
         ];

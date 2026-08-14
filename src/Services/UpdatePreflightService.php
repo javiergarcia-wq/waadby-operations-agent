@@ -5,6 +5,7 @@ namespace Waadby\OperationsAgent\Services;
 use Illuminate\Support\Env;
 use RuntimeException;
 use Waadby\OperationsAgent\Contracts\OperationsReporter;
+use Waadby\OperationsAgent\Updates\InstalledReleaseStore;
 
 class UpdatePreflightService
 {
@@ -12,6 +13,7 @@ class UpdatePreflightService
         private readonly ReleaseManifestValidator $validator,
         private readonly DatabaseRuntimeInfo $databaseInfo,
         private readonly OperationsReporter $reporter,
+        private readonly InstalledReleaseStore $installedRelease,
     ) {}
 
     /** @return array<string, mixed> */
@@ -22,7 +24,8 @@ class UpdatePreflightService
             [$manifest, $schemaErrors] = $this->read($manifestPath);
             $blockers = $schemaErrors;
             $warnings = [];
-            $currentVersion = (string) config('waadby_operations.application.version');
+            $installed = $this->installedRelease->read();
+            $currentVersion = (string) ($installed['version'] ?? config('waadby_operations.application.version'));
             if (($manifest['application_code'] ?? null) !== config('waadby_operations.application.code')) {
                 $blockers[] = 'El application_code del release no coincide con la aplicacion instalada.';
             }
@@ -31,6 +34,13 @@ class UpdatePreflightService
             }
             if (is_string($manifest['maximum_version'] ?? null) && version_compare($currentVersion, $manifest['maximum_version'], '>')) {
                 $blockers[] = "La version instalada supera la maxima {$manifest['maximum_version']}.";
+            }
+            $deployment = is_array($manifest['deployment'] ?? null) ? $manifest['deployment'] : [];
+            $agentVersion = '1.1.0';
+            if (($deployment['requires_operations_agent'] ?? false) === true
+                && is_string($deployment['minimum_operations_agent_version'] ?? null)
+                && version_compare($agentVersion, $deployment['minimum_operations_agent_version'], '<')) {
+                $blockers[] = "El operations-agent {$agentVersion} es anterior al minimo {$deployment['minimum_operations_agent_version']}.";
             }
 
             $requirements = is_array($manifest['requirements'] ?? null) ? $manifest['requirements'] : [];
@@ -113,6 +123,12 @@ class UpdatePreflightService
                 'backup_required' => (bool) ($manifest['backup_required'] ?? false),
                 'migrations_expected' => (bool) ($manifest['database']['migrations'] ?? false),
                 'healthchecks' => $manifest['healthchecks'] ?? [],
+                'manifest_version' => $manifest['manifest_version'] ?? null,
+                'signature_required' => ($manifest['manifest_version'] ?? null) === 2,
+                'files_manifest_sha256' => $manifest['package']['files_manifest_sha256'] ?? null,
+                'agent_version' => $agentVersion,
+                'backward_compatible_with_previous' => $deployment['backward_compatible_with_previous'] ?? null,
+                'rollback_policy' => $manifest['database']['rollback_policy'] ?? 'forward_only',
                 'system_modified' => false,
             ];
             $this->reporter->finishOperation($operation['public_id'], $result['compatible'] ? 'succeeded' : 'failed', $result, $result['compatible'] ? null : 'update_incompatible', $result['blockers'][0] ?? null);

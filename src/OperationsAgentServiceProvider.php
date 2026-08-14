@@ -11,6 +11,7 @@ use Waadby\OperationsAgent\Console\Commands\BackupVerifyCommand;
 use Waadby\OperationsAgent\Console\Commands\EnrollCommand;
 use Waadby\OperationsAgent\Console\Commands\InventoryCommand;
 use Waadby\OperationsAgent\Console\Commands\RegisterSelfCommand;
+use Waadby\OperationsAgent\Console\Commands\ReleaseBuildCommand;
 use Waadby\OperationsAgent\Console\Commands\RemoteDisableCommand;
 use Waadby\OperationsAgent\Console\Commands\RestorePreflightCommand;
 use Waadby\OperationsAgent\Console\Commands\UpdatePreflightCommand;
@@ -59,6 +60,7 @@ class OperationsAgentServiceProvider extends ServiceProvider
                 RegisterSelfCommand::class,
                 EnrollCommand::class,
                 RemoteDisableCommand::class,
+                ReleaseBuildCommand::class,
                 InventoryCommand::class,
                 BackupCommand::class,
                 BackupVerifyCommand::class,

@@ -7,7 +7,7 @@ class ReleaseManifestValidator
     private const TOP_LEVEL = [
         'manifest_version', 'application_code', 'version', 'minimum_version', 'maximum_version',
         'source_commit', 'package_sha256', 'package_file', 'backup_required', 'maintenance_required',
-        'requirements', 'database', 'configuration', 'healthchecks',
+        'requirements', 'database', 'configuration', 'healthchecks', 'package', 'deployment',
     ];
 
     private const REQUIRED = [
@@ -39,8 +39,9 @@ class ReleaseManifestValidator
         $this->rejectUnknown($manifest, self::TOP_LEVEL, 'manifest', $errors);
         $this->requireKeys($manifest, self::REQUIRED, 'manifest', $errors);
 
-        if (($manifest['manifest_version'] ?? null) !== 1) {
-            $errors[] = 'manifest_version debe ser 1.';
+        $version = $manifest['manifest_version'] ?? null;
+        if (! in_array($version, [1, 2], true)) {
+            $errors[] = 'manifest_version debe ser 1 o 2.';
         }
         if (! is_string($manifest['application_code'] ?? null) || ! preg_match('/^[a-z0-9][a-z0-9._-]+$/', $manifest['application_code'])) {
             $errors[] = 'application_code no cumple el patron permitido.';
@@ -69,9 +70,14 @@ class ReleaseManifestValidator
         }
 
         $this->validateRequirements($manifest['requirements'] ?? null, array_key_exists('requirements', $manifest), $errors);
-        $this->validateDatabase($manifest['database'] ?? null, $errors);
+        $this->validateDatabase($manifest['database'] ?? null, $errors, $version === 2);
         $this->validateConfiguration($manifest['configuration'] ?? null, $errors);
         $this->validateHealthchecks($manifest['healthchecks'] ?? null, $errors);
+        if ($version === 2) {
+            $this->validateV2($manifest, $errors);
+        } elseif (array_key_exists('package', $manifest) || array_key_exists('deployment', $manifest)) {
+            $errors[] = 'Manifest V1 no puede declarar package o deployment de V2.';
+        }
 
         return array_values(array_unique($errors));
     }
@@ -117,17 +123,20 @@ class ReleaseManifestValidator
     }
 
     /** @param list<string> $errors */
-    private function validateDatabase(mixed $database, array &$errors): void
+    private function validateDatabase(mixed $database, array &$errors, bool $v2): void
     {
         if (! is_array($database)) {
             $errors[] = 'database debe ser un objeto.';
 
             return;
         }
-        $this->rejectUnknown($database, ['migrations'], 'database', $errors);
-        $this->requireKeys($database, ['migrations'], 'database', $errors);
+        $this->rejectUnknown($database, $v2 ? ['migrations', 'rollback_policy'] : ['migrations'], 'database', $errors);
+        $this->requireKeys($database, $v2 ? ['migrations', 'rollback_policy'] : ['migrations'], 'database', $errors);
         if (! is_bool($database['migrations'] ?? null)) {
             $errors[] = 'database.migrations debe ser booleano.';
+        }
+        if ($v2 && ! in_array($database['rollback_policy'] ?? null, ['forward_only', 'rollback_safe'], true)) {
+            $errors[] = 'database.rollback_policy debe ser forward_only o rollback_safe.';
         }
     }
 
@@ -182,8 +191,43 @@ class ReleaseManifestValidator
             return;
         }
         foreach ($healthchecks as $index => $healthcheck) {
-            if (! is_string($healthcheck) || ! str_starts_with($healthcheck, '/')) {
-                $errors[] = "healthchecks.{$index} debe ser una ruta que comience por /.";
+            if (! is_string($healthcheck) || ! preg_match('#^/(?!/)#', $healthcheck) || parse_url($healthcheck, PHP_URL_HOST) !== null || str_contains($healthcheck, "\0")) {
+                $errors[] = "healthchecks.{$index} debe ser una ruta que comience por /, interna y relativa al mismo origen.";
+            }
+        }
+    }
+
+    /** @param array<string, mixed> $manifest @param list<string> $errors */
+    private function validateV2(array $manifest, array &$errors): void
+    {
+        $this->requireKeys($manifest, ['package', 'deployment'], 'manifest', $errors);
+        $package = $manifest['package'] ?? null;
+        if (! is_array($package)) {
+            $errors[] = 'package debe ser un objeto.';
+        } else {
+            $this->rejectUnknown($package, ['format', 'files_manifest_sha256'], 'package', $errors);
+            $this->requireKeys($package, ['format', 'files_manifest_sha256'], 'package', $errors);
+            if (($package['format'] ?? null) !== 'zip') {
+                $errors[] = 'package.format debe ser zip.';
+            }
+            if (! is_string($package['files_manifest_sha256'] ?? null) || ! preg_match('/^[a-f0-9]{64}$/i', $package['files_manifest_sha256'])) {
+                $errors[] = 'package.files_manifest_sha256 debe contener 64 caracteres hexadecimales.';
+            }
+        }
+        $deployment = $manifest['deployment'] ?? null;
+        if (! is_array($deployment)) {
+            $errors[] = 'deployment debe ser un objeto.';
+        } else {
+            $keys = ['backward_compatible_with_previous', 'requires_operations_agent', 'minimum_operations_agent_version'];
+            $this->rejectUnknown($deployment, $keys, 'deployment', $errors);
+            $this->requireKeys($deployment, $keys, 'deployment', $errors);
+            foreach (['backward_compatible_with_previous', 'requires_operations_agent'] as $key) {
+                if (! is_bool($deployment[$key] ?? null)) {
+                    $errors[] = "deployment.{$key} debe ser booleano.";
+                }
+            }
+            if (($deployment['minimum_operations_agent_version'] ?? null) !== null && ! is_string($deployment['minimum_operations_agent_version'])) {
+                $errors[] = 'deployment.minimum_operations_agent_version debe ser string o null.';
             }
         }
     }
@@ -215,6 +259,11 @@ class ReleaseManifestValidator
         }
         if (property_exists($document, 'database') && ! is_object($document->database)) {
             $errors[] = 'database debe ser un objeto.';
+        }
+        foreach (['package', 'deployment'] as $field) {
+            if (property_exists($document, $field) && ! is_object($document->{$field})) {
+                $errors[] = "{$field} debe ser un objeto.";
+            }
         }
         if (property_exists($document, 'configuration')) {
             if (! is_object($document->configuration)) {
