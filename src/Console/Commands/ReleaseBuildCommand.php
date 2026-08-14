@@ -6,6 +6,7 @@ use Illuminate\Console\Command;
 use RuntimeException;
 use Symfony\Component\Finder\Finder;
 use Symfony\Component\Process\Process;
+use Waadby\OperationsAgent\Support\ReleaseBuildOutputPathPolicy;
 use Waadby\OperationsAgent\Updates\ReleaseCanonicalizer;
 use Waadby\OperationsAgent\Updates\ReleasePackageVerifier;
 use Waadby\OperationsAgent\Updates\ReleasePathPolicy;
@@ -25,7 +26,7 @@ final class ReleaseBuildCommand extends Command
 
     protected $description = 'Build a deterministic, signed WAADBY Release Manifest V2 package';
 
-    public function handle(ReleaseSignatureService $signatures, ReleaseCanonicalizer $canonicalizer, ReleasePathPolicy $paths): int
+    public function handle(ReleaseSignatureService $signatures, ReleaseCanonicalizer $canonicalizer, ReleasePathPolicy $paths, ReleaseBuildOutputPathPolicy $outputPaths): int
     {
         try {
             $version = trim((string) $this->option('release-version'));
@@ -33,10 +34,7 @@ final class ReleaseBuildCommand extends Command
             if ($version === '' || $output === '') {
                 throw new RuntimeException('--release-version y --output son obligatorios.');
             }
-            $output = $this->absolute($output);
-            if (! is_dir($output) && ! mkdir($output, 0700, true) && ! is_dir($output)) {
-                throw new RuntimeException('No se pudo crear el directorio de salida privado.');
-            }
+            $output = $outputPaths->prepare($output, base_path(), public_path());
             $files = $this->collect((bool) $this->option('include-vendor'), $paths, $output);
             $previous = $this->previousPaths($this->option('previous-manifest'));
             foreach (array_diff($previous, array_keys($files)) as $deleted) {

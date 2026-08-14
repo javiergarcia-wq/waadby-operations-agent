@@ -6,18 +6,16 @@ use RuntimeException;
 
 final class CodeApplyService
 {
-    public function __construct(private readonly ReleasePathPolicy $paths) {}
+    public function __construct(private readonly ReleasePathPolicy $paths, private readonly UpdateDestinationPathPolicy $destinations) {}
 
     /** @param list<array{path:string,sha256:string,size:int,operation:string}> $files */
     public function apply(string $root, string $staging, array $files): void
     {
         foreach ($files as $file) {
             $relative = $this->paths->assertSafe($file['path']);
-            $target = rtrim($root, '/\\').DIRECTORY_SEPARATOR.str_replace('/', DIRECTORY_SEPARATOR, $relative);
-            if (is_link($target)) {
-                throw new RuntimeException('El destino de update contiene un symlink no permitido.');
-            }
+            $target = $this->destinations->resolveFile($root, $relative);
             if ($file['operation'] === 'delete') {
+                $target = $this->destinations->resolveFile($root, $relative);
                 if (is_file($target) && ! @unlink($target)) {
                     throw new RuntimeException('No se pudo borrar un fichero autorizado del release.');
                 }
@@ -31,6 +29,7 @@ final class CodeApplyService
             if (! is_dir(dirname($target)) && ! mkdir(dirname($target), 0755, true) && ! is_dir(dirname($target))) {
                 throw new RuntimeException('No se pudo crear el directorio de destino del release.');
             }
+            $target = $this->destinations->resolveFile($root, $relative);
             $temporary = $target.'.waadby-update-'.bin2hex(random_bytes(6));
             $input = fopen($source, 'rb');
             $output = fopen($temporary, 'xb');
@@ -56,6 +55,7 @@ final class CodeApplyService
                 @unlink($temporary);
                 throw new RuntimeException('El fichero temporal no supera SHA-256.');
             }
+            $target = $this->destinations->resolveFile($root, $relative);
             if (is_file($target) && ! @unlink($target)) {
                 @unlink($temporary);
                 throw new RuntimeException('No se pudo sustituir el fichero anterior.');

@@ -6,7 +6,7 @@ use RuntimeException;
 
 final class CodeSnapshotService
 {
-    public function __construct(private readonly ReleaseCanonicalizer $canonicalizer, private readonly ReleasePathPolicy $paths, private readonly InstalledReleaseStore $installedRelease) {}
+    public function __construct(private readonly ReleaseCanonicalizer $canonicalizer, private readonly ReleasePathPolicy $paths, private readonly InstalledReleaseStore $installedRelease, private readonly UpdateDestinationPathPolicy $destinations) {}
 
     /** @param list<array{path:string,sha256:string,size:int,operation:string}> $files
      * @return array{path:string,sha256:string,manifest:array<string,mixed>}
@@ -23,13 +23,10 @@ final class CodeSnapshotService
         $entries = [];
         foreach ($files as $file) {
             $relative = $this->paths->assertSafe($file['path']);
-            $source = rtrim($root, '/\\').DIRECTORY_SEPARATOR.str_replace('/', DIRECTORY_SEPARATOR, $relative);
+            $source = $this->destinations->resolveFile($root, $relative);
             $exists = is_file($source);
             $entry = ['path' => $relative, 'existed' => $exists, 'sha256' => null, 'size' => 0];
             if ($exists) {
-                if (is_link($source)) {
-                    throw new RuntimeException('El destino de update contiene un symlink no permitido.');
-                }
                 $target = $directory.DIRECTORY_SEPARATOR.'files'.DIRECTORY_SEPARATOR.str_replace('/', DIRECTORY_SEPARATOR, $relative);
                 $this->directory(dirname($target));
                 if (! copy($source, $target)) {
@@ -105,8 +102,9 @@ final class CodeSnapshotService
         $manifest = $this->verify($directory, $expectedSha);
         foreach ($manifest['files'] as $entry) {
             $relative = $this->paths->assertSafe((string) $entry['path']);
-            $target = rtrim($root, '/\\').DIRECTORY_SEPARATOR.str_replace('/', DIRECTORY_SEPARATOR, $relative);
+            $target = $this->destinations->resolveFile($root, $relative);
             if (($entry['existed'] ?? false) !== true) {
+                $target = $this->destinations->resolveFile($root, $relative);
                 if (is_file($target) && ! @unlink($target)) {
                     throw new RuntimeException('No se pudo retirar un fichero nuevo durante rollback.');
                 }
@@ -114,7 +112,7 @@ final class CodeSnapshotService
                 continue;
             }
             $source = $directory.DIRECTORY_SEPARATOR.'files'.DIRECTORY_SEPARATOR.str_replace('/', DIRECTORY_SEPARATOR, $relative);
-            $this->replace($source, $target, (string) $entry['sha256']);
+            $this->replaceReleaseFile($root, $relative, $source, (string) $entry['sha256']);
         }
         $state = $manifest['installed_release'];
         $stateTarget = $this->installedRelease->path();
@@ -133,6 +131,27 @@ final class CodeSnapshotService
             @unlink($temporary);
             throw new RuntimeException('No se pudo preparar un fichero de rollback verificado.');
         }
+        if (is_file($target) && ! @unlink($target)) {
+            @unlink($temporary);
+            throw new RuntimeException('No se pudo sustituir un fichero durante rollback.');
+        }
+        if (! @rename($temporary, $target) || ! hash_equals($sha, hash_file('sha256', $target))) {
+            @unlink($temporary);
+            throw new RuntimeException('El fichero restaurado no supera SHA-256.');
+        }
+    }
+
+    private function replaceReleaseFile(string $root, string $relative, string $source, string $sha): void
+    {
+        $target = $this->destinations->resolveFile($root, $relative);
+        $this->directory(dirname($target));
+        $target = $this->destinations->resolveFile($root, $relative);
+        $temporary = $target.'.rollback-'.bin2hex(random_bytes(6));
+        if (! copy($source, $temporary) || ! hash_equals($sha, hash_file('sha256', $temporary))) {
+            @unlink($temporary);
+            throw new RuntimeException('No se pudo preparar un fichero de rollback verificado.');
+        }
+        $target = $this->destinations->resolveFile($root, $relative);
         if (is_file($target) && ! @unlink($target)) {
             @unlink($temporary);
             throw new RuntimeException('No se pudo sustituir un fichero durante rollback.');

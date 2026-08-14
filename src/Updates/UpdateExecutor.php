@@ -49,6 +49,7 @@ final class UpdateExecutor
         $maintenance = false;
         $migrationsStarted = false;
         $migrationsCompleted = false;
+        $mutationsStarted = false;
         $appliedMigrations = [];
         $migrationBatch = null;
         $snapshot = null;
@@ -89,8 +90,8 @@ final class UpdateExecutor
             }
 
             $emit('applying_code');
+            $mutationsStarted = true;
             $this->code->apply($root, $staging, $verified['files']);
-            $this->command([PHP_BINARY, 'artisan', 'optimize:clear', '--no-ansi', '--no-interaction'], $root, $context, 'cache_clear');
             $emit('code_applied');
 
             if ((bool) ($manifest['database']['migrations'] ?? false)) {
@@ -115,6 +116,7 @@ final class UpdateExecutor
                 }
                 $emit('migrations_completed', ['migration_batch' => $migrationBatch, 'applied_migrations' => $appliedMigrations]);
             }
+            $this->command([PHP_BINARY, 'artisan', 'optimize:clear', '--no-ansi', '--no-interaction'], $root, $context, 'cache_clear');
 
             $this->installedRelease->write([
                 'application_code' => (string) $manifest['application_code'],
@@ -124,12 +126,14 @@ final class UpdateExecutor
                 'applied_at' => now()->utc()->toIso8601String(),
             ]);
 
-            $emit('healthchecking');
-            $health = $this->healthchecks($manifest, $context, $root);
+            $emit('internal_smoke');
+            $this->internalSmoke($manifest, $context, $root);
             if ($maintenance) {
                 $this->command([PHP_BINARY, 'artisan', 'up', '--no-ansi', '--no-interaction'], $root, $context, 'maintenance_up');
                 $maintenance = false;
             }
+            $emit('healthchecking');
+            $health = $this->healthchecks($manifest, $context);
             $this->command([PHP_BINARY, 'artisan', 'queue:restart', '--no-ansi', '--no-interaction'], $root, $context, 'queue_restart', optional: true);
             $emit('succeeded');
             $this->removeTree($staging);
@@ -141,10 +145,26 @@ final class UpdateExecutor
             ];
         } catch (\Throwable $exception) {
             $safe = $this->safeMessage($exception);
-            if ($snapshot === null) {
+            if ($snapshot === null || ! $mutationsStarted) {
                 $emit('failed', ['failure_code' => 'update_precondition_failed']);
 
                 return ['status' => 'failed', 'failure_code' => 'update_precondition_failed', 'failure_message_safe' => $safe, 'last_safe_phase' => $phase];
+            }
+            if (! $maintenance) {
+                try {
+                    $this->command([PHP_BINARY, 'artisan', 'down', '--retry=60', '--no-ansi', '--no-interaction'], $root, $context, 'rollback_maintenance_down');
+                    $maintenance = true;
+                } catch (\Throwable $maintenanceException) {
+                    $emit('recovery_required', ['failure_code' => 'update_recovery_required']);
+
+                    return [
+                        'status' => 'recovery_required', 'failure_code' => 'update_recovery_required',
+                        'failure_message_safe' => $this->safeMessage($maintenanceException), 'last_safe_phase' => $phase,
+                        'snapshot_path' => $snapshot['path'], 'snapshot_sha256' => $snapshot['sha256'],
+                        'migration_batch' => $migrationBatch, 'applied_migrations' => $appliedMigrations,
+                        'maintenance_active' => false,
+                    ];
+                }
             }
             $emit('rolling_back', ['failure_code' => 'update_apply_failed']);
             try {
@@ -156,7 +176,10 @@ final class UpdateExecutor
                 if ($migrationsStarted && $appliedMigrations !== []) {
                     if ($rollbackPolicy === 'rollback_safe' && is_int($migrationBatch)) {
                         if (isset($context['migration_runner']) && is_callable($context['migration_runner']) && app()->environment('testing')) {
-                            ($context['migration_runner'])('down', $migrationBatch);
+                            $rollbackResult = ($context['migration_runner'])('down', $migrationBatch);
+                            if ($rollbackResult === false || (is_array($rollbackResult) && array_intersect($appliedMigrations, $rollbackResult['remaining'] ?? []) !== [])) {
+                                throw new RuntimeException('El batch de migrations no se revirtio por completo.');
+                            }
                         } else {
                             $this->command([PHP_BINARY, 'artisan', 'migrate:rollback', '--batch='.$migrationBatch, '--force', '--no-ansi', '--no-interaction'], $root, $context, 'migrate_rollback');
                             $remaining = $this->migrationRows();
@@ -171,10 +194,9 @@ final class UpdateExecutor
                 $this->snapshots->restore($root, $snapshot['path'], $snapshot['sha256']);
                 $this->command([PHP_BINARY, 'artisan', 'optimize:clear', '--no-ansi', '--no-interaction'], $root, $context, 'rollback_cache_clear');
                 $this->rollbackSmoke($context, $root);
-                if ($maintenance) {
-                    $this->command([PHP_BINARY, 'artisan', 'up', '--no-ansi', '--no-interaction'], $root, $context, 'maintenance_up');
-                    $maintenance = false;
-                }
+                $this->command([PHP_BINARY, 'artisan', 'up', '--no-ansi', '--no-interaction'], $root, $context, 'maintenance_up');
+                $maintenance = false;
+                $this->rollbackHttpHealthcheck($manifest, $context);
                 $emit('rolled_back');
 
                 return [
@@ -205,10 +227,11 @@ final class UpdateExecutor
     }
 
     /** @param array<string, mixed> $manifest @param array<string, mixed> $context @return list<array<string, mixed>> */
-    private function healthchecks(array $manifest, array $context, string $root): array
+    private function healthchecks(array $manifest, array $context): array
     {
-        if (isset($context['healthcheck_runner']) && is_callable($context['healthcheck_runner']) && app()->environment('testing')) {
-            $result = ($context['healthcheck_runner'])($manifest['healthchecks'] ?? []);
+        $runner = $context['http_healthcheck_runner'] ?? $context['healthcheck_runner'] ?? null;
+        if (is_callable($runner) && app()->environment('testing')) {
+            $result = $runner($manifest['healthchecks'] ?? []);
             if (! is_array($result)) {
                 throw new RuntimeException('El healthcheck de prueba fallo.');
             }
@@ -233,6 +256,20 @@ final class UpdateExecutor
             }
             $results[] = ['path' => $path, 'status' => $response->status(), 'latency_ms' => $latency, 'result' => 'ok'];
         }
+
+        return $results;
+    }
+
+    /** @param array<string, mixed> $manifest @param array<string, mixed> $context */
+    private function internalSmoke(array $manifest, array $context, string $root): void
+    {
+        if (isset($context['internal_smoke_runner']) && is_callable($context['internal_smoke_runner']) && app()->environment('testing')) {
+            if (($context['internal_smoke_runner'])($manifest) !== true) {
+                throw new RuntimeException('El smoke interno de prueba fallo.');
+            }
+
+            return;
+        }
         $this->database->connection()->select('select 1');
         $this->command([PHP_BINARY, 'artisan', '--version', '--no-ansi'], $root, $context, 'bootstrap_smoke');
         $status = $this->command([PHP_BINARY, 'artisan', 'migrate:status', '--no-ansi', '--no-interaction'], $root, $context, 'migration_status');
@@ -247,14 +284,14 @@ final class UpdateExecutor
             throw new RuntimeException('El version smoke no coincide con el release objetivo.');
         }
 
-        return $results;
     }
 
     /** @param array<string, mixed> $context */
     private function rollbackSmoke(array $context, string $root): void
     {
-        if (isset($context['rollback_healthcheck_runner']) && is_callable($context['rollback_healthcheck_runner']) && app()->environment('testing')) {
-            if (($context['rollback_healthcheck_runner'])() !== true) {
+        $runner = $context['internal_rollback_smoke_runner'] ?? $context['rollback_healthcheck_runner'] ?? null;
+        if (is_callable($runner) && app()->environment('testing')) {
+            if ($runner() !== true) {
                 throw new RuntimeException('El healthcheck de rollback fallo.');
             }
 
@@ -262,6 +299,22 @@ final class UpdateExecutor
         }
         $this->database->connection()->select('select 1');
         $this->command([PHP_BINARY, 'artisan', '--version', '--no-ansi'], $root, $context, 'rollback_bootstrap_smoke');
+    }
+
+    /** @param array<string, mixed> $manifest @param array<string, mixed> $context */
+    private function rollbackHttpHealthcheck(array $manifest, array $context): void
+    {
+        $runner = $context['rollback_http_healthcheck_runner'] ?? null;
+        if (is_callable($runner) && app()->environment('testing')) {
+            if ($runner($manifest['healthchecks'] ?? []) === false) {
+                throw new RuntimeException('El healthcheck HTTP posterior al rollback fallo.');
+            }
+
+            return;
+        }
+        if (($context['rollback_http_healthchecks'] ?? false) === true) {
+            $this->healthchecks($manifest, $context);
+        }
     }
 
     /** @return array<string, int> */
