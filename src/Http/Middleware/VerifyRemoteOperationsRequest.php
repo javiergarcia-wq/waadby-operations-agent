@@ -85,6 +85,7 @@ final class VerifyRemoteOperationsRequest
             ($claims['correlation_id'] ?? null) === $correlation,
             ($claims['idempotency_key'] ?? '') === $idempotency,
             ($claims['range'] ?? '') === (string) $request->header('Range', ''),
+            ($claims['chunk_offset'] ?? '') === (string) $request->header('X-WAADBY-Chunk-Offset', ''),
             ($claims['operation'] ?? null) === $this->operationFor($expectedPath, $request->getMethod()),
             ! $request->isMethod('post') || $idempotency !== '',
         ];
@@ -103,6 +104,11 @@ final class VerifyRemoteOperationsRequest
             $method === 'POST' && preg_match('#^/waadby-operations/v1/backup/[0-9a-f-]{36}/verify$#i', $path) === 1 => 'backup_verify',
             $method === 'POST' && $path === '/waadby-operations/v1/restore/preflight' => 'restore_preflight',
             $method === 'POST' && $path === '/waadby-operations/v1/update/preflight' => 'update_preflight',
+            $method === 'POST' && $path === '/waadby-operations/v1/updates/prepare' => 'update_prepare',
+            $method === 'GET' && preg_match('#^/waadby-operations/v1/updates/[0-9a-f-]{36}$#i', $path) === 1 => 'update_status',
+            $method === 'PUT' && preg_match('#^/waadby-operations/v1/updates/[0-9a-f-]{36}/chunks/[0-9]+$#i', $path) === 1 => 'update_chunk',
+            $method === 'POST' && preg_match('#^/waadby-operations/v1/updates/[0-9a-f-]{36}/finalize$#i', $path) === 1 => 'update_finalize',
+            $method === 'POST' && preg_match('#^/waadby-operations/v1/updates/[0-9a-f-]{36}/apply$#i', $path) === 1 => 'update_apply',
             default => 'unsupported',
         };
     }
