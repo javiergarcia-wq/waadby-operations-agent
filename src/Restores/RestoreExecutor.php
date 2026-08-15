@@ -37,6 +37,8 @@ final class RestoreExecutor
         $sourceStage = null;
         $safetyStage = null;
         $pointOfNoReturn = false;
+        $applicationResumed = false;
+        $primaryRecoveryMaintenance = [];
         try {
             $this->assertSafety($plan, $safetyBackupPath, $context);
             $this->journals->checkpoint($restoreId, 'safety_backup_verified', 'validating_source');
@@ -78,20 +80,21 @@ final class RestoreExecutor
             $this->reconcileBestEffort($restoreId);
             $this->lifecycle->smokeInternal();
             $this->journals->checkpoint($restoreId, 'internal_smoke', 'healthchecking');
+            $applicationResumed = true;
             $this->lifecycle->resume();
-            try {
-                $this->lifecycle->smokeHttp();
-                $this->reporter->audit('operations.restore.healthcheck', ['restore_id' => $restoreId, 'result' => 'healthy']);
-            } catch (\Throwable $httpFailure) {
-                $this->lifecycle->quiesce();
-                throw $httpFailure;
-            }
+            $this->lifecycle->smokeHttp();
+            $this->reporter->audit('operations.restore.healthcheck', ['restore_id' => $restoreId, 'result' => 'healthy']);
             $this->journals->checkpoint($restoreId, 'completed', 'succeeded');
+            $applicationResumed = false;
             $this->reconcileBestEffort($restoreId);
             $this->reporter->audit('operations.restore.succeeded', ['restore_id' => $restoreId, 'result' => 'succeeded']);
 
             return ['restore_id' => $restoreId, 'status' => 'succeeded', 'plan_sha256' => $plan['plan_sha256']];
         } catch (\Throwable $failure) {
+            if ($applicationResumed) {
+                $primaryRecoveryMaintenance = $this->enterRecoveryMaintenance();
+                $applicationResumed = false;
+            }
             if (! $pointOfNoReturn) {
                 $this->journals->checkpoint($restoreId, 'failed_before_apply', 'failed', ['error' => $this->safe($failure)]);
                 $this->reconcileBestEffort($restoreId);
@@ -99,26 +102,33 @@ final class RestoreExecutor
                 throw $failure;
             }
             if (! is_string($safetyStage)) {
-                $this->journals->checkpoint($restoreId, 'no_safety_rollback', 'recovery_required', ['cause' => $this->safe($failure)]);
+                $this->journals->checkpoint($restoreId, 'no_safety_rollback', 'recovery_required', ['cause' => $this->safe($failure)] + $primaryRecoveryMaintenance);
                 $this->reconcileBestEffort($restoreId);
                 $this->reporter->audit('operations.restore.recovery_required', ['restore_id' => $restoreId, 'result' => 'recovery_required', 'disaster_mode' => true]);
                 throw new RuntimeException('Disaster restore fallo sin safety backup; se requiere recuperacion manual.', previous: $failure);
             }
             $this->reporter->audit('operations.restore.rollback_started', ['restore_id' => $restoreId, 'result' => 'started']);
+            $rollbackResumed = false;
             try {
                 $safetyInspection ??= $this->verifier->inspect($safetyBackupPath, (string) $plan['target']['application_code']);
                 $this->applier->apply($safetyStage, $safetyInspection['manifest']);
                 $this->lifecycle->migrateForward();
                 $this->lifecycle->smokeInternal();
+                $rollbackResumed = true;
                 $this->lifecycle->resume();
                 $this->lifecycle->smokeHttp();
                 $this->journals->checkpoint($restoreId, 'rollback_completed', 'rolled_back', ['cause' => $this->safe($failure)]);
+                $rollbackResumed = false;
                 $this->reconcileBestEffort($restoreId);
                 $this->reporter->audit('operations.restore.rolled_back', ['restore_id' => $restoreId, 'result' => 'rolled_back']);
 
                 return ['restore_id' => $restoreId, 'status' => 'rolled_back', 'failure_message_safe' => $this->safe($failure)];
             } catch (\Throwable $rollbackFailure) {
-                $this->journals->checkpoint($restoreId, 'rollback_failed', 'recovery_required', ['cause' => $this->safe($failure), 'rollback_error' => $this->safe($rollbackFailure)]);
+                $recoveryMaintenance = $rollbackResumed ? $this->enterRecoveryMaintenance() : [];
+                $this->journals->checkpoint($restoreId, 'rollback_failed', 'recovery_required', [
+                    'cause' => $this->safe($failure),
+                    'rollback_error' => $this->safe($rollbackFailure),
+                ] + $recoveryMaintenance);
                 $this->reconcileBestEffort($restoreId);
                 $this->reporter->audit('operations.restore.recovery_required', ['restore_id' => $restoreId, 'result' => 'recovery_required']);
                 throw new RuntimeException('Restore y rollback fallaron; se requiere recuperacion manual mediante el journal privado. '.$this->safe($rollbackFailure), previous: $rollbackFailure);
@@ -216,6 +226,27 @@ final class RestoreExecutor
             }
         } catch (\Throwable) {
             // The filesystem journal remains authoritative until reconciliation can be retried.
+        }
+    }
+
+    /** @return array{recovery_maintenance_attempted:true,recovery_maintenance_restored:bool,recovery_quiesce_failed:bool,recovery_quiesce_error?:string} */
+    private function enterRecoveryMaintenance(): array
+    {
+        try {
+            $this->lifecycle->quiesce();
+
+            return [
+                'recovery_maintenance_attempted' => true,
+                'recovery_maintenance_restored' => true,
+                'recovery_quiesce_failed' => false,
+            ];
+        } catch (\Throwable $quiesceFailure) {
+            return [
+                'recovery_maintenance_attempted' => true,
+                'recovery_maintenance_restored' => false,
+                'recovery_quiesce_failed' => true,
+                'recovery_quiesce_error' => $this->safe($quiesceFailure),
+            ];
         }
     }
 
