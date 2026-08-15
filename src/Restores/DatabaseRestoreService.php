@@ -81,6 +81,7 @@ final class DatabaseRestoreService
         }
         $target = $this->privateStorage->prepareFile($configuredTarget);
         $temporary = $target.'.restore-'.bin2hex(random_bytes(5));
+        $previous = $target.'.previous-'.bin2hex(random_bytes(5));
         try {
             $pdo = new PDO('sqlite:'.$temporary);
             $pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
@@ -89,11 +90,21 @@ final class DatabaseRestoreService
                 throw new RuntimeException('El destino SQLite restaurado no supera integrity_check.');
             }
             unset($pdo);
+            if (is_file($target) && ! @rename($target, $previous)) {
+                throw new RuntimeException('No se pudo apartar el destino SQLite para el cutover.');
+            }
             if (! @rename($temporary, $target)) {
+                if (is_file($previous)) {
+                    @rename($previous, $target);
+                }
                 throw new RuntimeException('No se pudo efectuar el cutover SQLite atomico.');
             }
+            @unlink($previous);
         } finally {
             @unlink($temporary);
+            if (! is_file($target) && is_file($previous)) {
+                @rename($previous, $target);
+            }
         }
     }
 
