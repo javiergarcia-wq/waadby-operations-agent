@@ -4,6 +4,7 @@ namespace Waadby\OperationsAgent\Services;
 
 use RuntimeException;
 use Waadby\OperationsAgent\Contracts\OperationsReporter;
+use Waadby\OperationsAgent\Restores\RestorePlan;
 
 class RestorePreflightService
 {
@@ -29,6 +30,17 @@ class RestorePreflightService
         }
 
         return $this->analyzePersisted($reference, $idempotencyKey, $actorId);
+    }
+
+    /** @param array<string, mixed> $source @return array<string, mixed> */
+    public function plan(string $reference, array $source, ?int $actorId = null, bool $allowPortable = false): array
+    {
+        $result = $this->analyze($reference, null, $actorId, $allowPortable);
+        if (! $result['compatible']) {
+            throw new RuntimeException($result['blockers'][0] ?? 'El backup no es compatible con la instalacion.');
+        }
+
+        return RestorePlan::create($result, $source, (int) config('waadby_operations.restores.plan_ttl_seconds', 900));
     }
 
     /** @return array<string, mixed> */
@@ -77,6 +89,10 @@ class RestorePreflightService
         $warnings = [];
         $backupDriver = $manifest['database']['driver'] ?? null;
         $configuredDriver = $this->databaseInfo->configuredDriver();
+        $configuredEnvironment = (string) config('waadby_operations.application.environment');
+        if (! hash_equals($configuredEnvironment, (string) ($manifest['environment'] ?? ''))) {
+            $blockers[] = 'El environment del backup no coincide exactamente con la instalacion actual.';
+        }
         if (($manifest['database']['included'] ?? false) === true) {
             if (! is_string($configuredDriver) || $configuredDriver === '') {
                 $blockers[] = 'No se pudo determinar el driver de base de datos configurado en la instalacion.';
@@ -88,17 +104,32 @@ class RestorePreflightService
             $warnings[] = 'El backup no incluye configuracion cifrada; la recuperacion requerira configuracion externa.';
         }
         if (version_compare((string) $manifest['application_version'], (string) config('waadby_operations.application.version'), '>')) {
-            $warnings[] = 'El backup procede de una version posterior a la instalada actualmente.';
+            $blockers[] = 'El backup procede de una version posterior a la instalada actualmente.';
+        } elseif (version_compare((string) $manifest['application_version'], (string) config('waadby_operations.application.version'), '<')
+            && ! $this->hasForwardMigrationPath($manifest)) {
+            $blockers[] = 'El backup es anterior y no existe una ruta de migracion forward compatible demostrable.';
         }
 
         return [
             'compatible' => $blockers === [],
             'application_code' => $manifest['application_code'],
+            'environment' => $manifest['environment'],
             'backup_version' => $manifest['application_version'],
             'current_version' => (string) config('waadby_operations.application.version'),
             'database_driver' => $backupDriver,
             'configured_database_driver' => $configuredDriver,
             'backup_type' => $manifest['backup_type'],
+            'backup_id' => $manifest['backup_id'],
+            'backup_sha256' => $inspection['sha256'],
+            'backup_size_bytes' => $inspection['size_bytes'],
+            'manifest' => $manifest,
+            'components' => [
+                'database' => (bool) ($manifest['database']['included'] ?? false),
+                'storage' => (bool) ($manifest['storage']['included'] ?? false),
+                'configuration' => false,
+                'code_snapshot' => false,
+            ],
+            'migration_baseline' => $manifest['migrations'] ?? ['count' => 0, 'last' => null],
             'configuration_available' => (bool) ($manifest['configuration']['included'] ?? false),
             'checksum_state' => 'valid',
             'verification_source' => $verificationSource,
@@ -106,6 +137,26 @@ class RestorePreflightService
             'blockers' => $blockers,
             'data_modified' => false,
         ];
+    }
+
+    /** @param array<string, mixed> $manifest */
+    private function hasForwardMigrationPath(array $manifest): bool
+    {
+        $baseline = $manifest['migrations'] ?? null;
+        if (! is_array($baseline) || ! array_key_exists('count', $baseline)) {
+            return false;
+        }
+
+        $current = $this->databaseInfo->migrationState();
+
+        $last = $baseline['last'] ?? null;
+        if ((int) $baseline['count'] === 0) {
+            return $last === null;
+        }
+
+        return is_string($last) && $last !== ''
+            && in_array($last, $current['available_names'] ?? [], true)
+            && (int) $baseline['count'] <= count($current['available_names'] ?? []);
     }
 
     /** @param array<string, mixed> $result */

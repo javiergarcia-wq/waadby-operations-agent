@@ -40,6 +40,25 @@ class DatabaseRuntimeInfo
         return is_string($driver) && $driver !== '' ? strtolower($driver) : null;
     }
 
+    /** @return array{count: int, last: ?string, names: array<int, string>, available_names: array<int, string>} */
+    public function migrationState(): array
+    {
+        $available = collect(glob(base_path('database/migrations/*.php')) ?: [])
+            ->map(fn (string $path): string => pathinfo($path, PATHINFO_FILENAME))
+            ->sort()->values()->all();
+        try {
+            $connection = $this->database->connection();
+            if (! $connection->getSchemaBuilder()->hasTable('migrations')) {
+                return ['count' => 0, 'last' => null, 'names' => [], 'available_names' => $available];
+            }
+            $names = $connection->table('migrations')->orderBy('batch')->orderBy('migration')->pluck('migration')->map(fn (mixed $name): string => (string) $name)->values();
+
+            return ['count' => $names->count(), 'last' => $names->last(), 'names' => $names->all(), 'available_names' => $available];
+        } catch (\Throwable) {
+            return ['count' => -1, 'last' => null, 'names' => [], 'available_names' => $available];
+        }
+    }
+
     public static function normalizeVersion(?string $value): ?string
     {
         if (! is_string($value) || trim($value) === '') {

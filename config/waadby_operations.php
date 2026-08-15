@@ -8,6 +8,24 @@ return [
         'version' => env('WAADBY_APPLICATION_VERSION', '0.0.0'),
     ],
     'enabled' => env('ACCESS_OPERATIONS_ENABLED', false),
+    'restores' => [
+        'apply_enabled' => env('ACCESS_OPERATIONS_RESTORE_APPLY_ENABLED', false),
+        'agent_enabled' => env('WAADBY_OPERATIONS_RESTORE_AGENT_ENABLED', false),
+        'require_safety_backup_production' => env('ACCESS_OPERATIONS_RESTORE_REQUIRE_SAFETY_BACKUP_PRODUCTION', true),
+        'require_safety_vault_production' => env('ACCESS_OPERATIONS_RESTORE_REQUIRE_SAFETY_VAULT_PRODUCTION', true),
+        'journal_path' => env('WAADBY_OPERATIONS_RESTORE_JOURNAL_PATH', storage_path('app/private/waadby-operations/restores/journals')),
+        'staging_path' => env('WAADBY_OPERATIONS_RESTORE_STAGING_PATH', storage_path('app/private/waadby-operations/restores/staging')),
+        'validation_path' => env('WAADBY_OPERATIONS_RESTORE_VALIDATION_PATH', storage_path('app/private/waadby-operations/restores/validation')),
+        'plan_ttl_seconds' => max(60, (int) env('WAADBY_OPERATIONS_RESTORE_PLAN_TTL', 900)),
+        'process_timeout_seconds' => max(30, (int) env('WAADBY_OPERATIONS_RESTORE_PROCESS_TIMEOUT', 1800)),
+        'maximum_files' => max(1, (int) env('WAADBY_OPERATIONS_RESTORE_MAX_FILES', 100000)),
+        'maximum_uncompressed_bytes' => max(1048576, (int) env('WAADBY_OPERATIONS_RESTORE_MAX_UNCOMPRESSED_BYTES', 10737418240)),
+        'maximum_archive_bytes' => max(1048576, (int) env('WAADBY_OPERATIONS_RESTORE_MAX_ARCHIVE_BYTES', 10737418240)),
+        'chunk_bytes' => min(524288, max(65536, (int) env('WAADBY_OPERATIONS_RESTORE_CHUNK_BYTES', 262144))),
+        'health_path' => env('WAADBY_OPERATIONS_RESTORE_HEALTH_PATH', '/up'),
+        'maintenance_secret' => env('WAADBY_OPERATIONS_RESTORE_MAINTENANCE_SECRET'),
+        'integration_hold_path' => env('WAADBY_OPERATIONS_RESTORE_INTEGRATION_HOLD_PATH', storage_path('app/private/waadby-operations/restores/integration-hold.json')),
+    ],
     'updates' => [
         'apply_enabled' => env('ACCESS_OPERATIONS_UPDATE_APPLY_ENABLED', false),
         'agent_enabled' => env('WAADBY_OPERATIONS_UPDATE_AGENT_ENABLED', false),
@@ -59,5 +77,6 @@ return [
     'database' => [
         'enabled' => true,
         'mysqldump_binary' => env('WAADBY_OPERATIONS_MYSQLDUMP', 'mysqldump'),
+        'mysql_binary' => env('WAADBY_OPERATIONS_MYSQL', 'mysql'),
     ],
 ];

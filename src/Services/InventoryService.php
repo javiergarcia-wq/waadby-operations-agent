@@ -68,7 +68,7 @@ class InventoryService
                 'preflight' => true,
                 'apply' => (bool) config('waadby_operations.updates.apply_enabled', false),
                 'rollback' => (bool) config('waadby_operations.updates.apply_enabled', false),
-                'agent_version' => '1.1.0',
+                'agent_version' => '1.2.0',
             ],
             'timestamp' => now()->utc()->toIso8601String(),
         ];

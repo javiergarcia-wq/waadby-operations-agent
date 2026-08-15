@@ -109,6 +109,11 @@ final class VerifyRemoteOperationsRequest
             $method === 'PUT' && preg_match('#^/waadby-operations/v1/updates/[0-9a-f-]{36}/chunks/[0-9]+$#i', $path) === 1 => 'update_chunk',
             $method === 'POST' && preg_match('#^/waadby-operations/v1/updates/[0-9a-f-]{36}/finalize$#i', $path) === 1 => 'update_finalize',
             $method === 'POST' && preg_match('#^/waadby-operations/v1/updates/[0-9a-f-]{36}/apply$#i', $path) === 1 => 'update_apply',
+            $method === 'POST' && $path === '/waadby-operations/v1/restores/prepare' => 'restore_prepare',
+            $method === 'GET' && preg_match('#^/waadby-operations/v1/restores/[0-9a-f-]{36}$#i', $path) === 1 => 'restore_status',
+            $method === 'PUT' && preg_match('#^/waadby-operations/v1/restores/[0-9a-f-]{36}/chunks/[0-9]+$#i', $path) === 1 => 'restore_chunk',
+            $method === 'POST' && preg_match('#^/waadby-operations/v1/restores/[0-9a-f-]{36}/finalize$#i', $path) === 1 => 'restore_finalize',
+            $method === 'POST' && preg_match('#^/waadby-operations/v1/restores/[0-9a-f-]{36}/apply$#i', $path) === 1 => 'restore_apply',
             default => 'unsupported',
         };
     }

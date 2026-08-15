@@ -13,15 +13,19 @@ use Waadby\OperationsAgent\Console\Commands\InventoryCommand;
 use Waadby\OperationsAgent\Console\Commands\RegisterSelfCommand;
 use Waadby\OperationsAgent\Console\Commands\ReleaseBuildCommand;
 use Waadby\OperationsAgent\Console\Commands\RemoteDisableCommand;
+use Waadby\OperationsAgent\Console\Commands\RestoreApplyCommand;
 use Waadby\OperationsAgent\Console\Commands\RestorePreflightCommand;
+use Waadby\OperationsAgent\Console\Commands\RestoreReconcileCommand;
 use Waadby\OperationsAgent\Console\Commands\UpdatePreflightCommand;
 use Waadby\OperationsAgent\Console\Commands\VaultDecryptFileCommand;
 use Waadby\OperationsAgent\Console\Commands\VaultVerifyFileCommand;
 use Waadby\OperationsAgent\Contracts\OperationsReporter;
 use Waadby\OperationsAgent\Contracts\OperationsRuntime;
+use Waadby\OperationsAgent\Contracts\RestoreLifecycleHooks;
 use Waadby\OperationsAgent\Database\DatabaseBackupDriverResolver;
 use Waadby\OperationsAgent\Database\MySqlDatabaseBackupDriver;
 use Waadby\OperationsAgent\Database\SqliteDatabaseBackupDriver;
+use Waadby\OperationsAgent\Restores\LaravelRestoreLifecycleHooks;
 use Waadby\OperationsAgent\Services\LocalOperationsRuntime;
 use Waadby\OperationsAgent\Support\FilesystemOperationsReporter;
 
@@ -36,6 +40,7 @@ class OperationsAgentServiceProvider extends ServiceProvider
             [new SqliteDatabaseBackupDriver($app['db']), new MySqlDatabaseBackupDriver($app['db'])],
         ));
         $this->app->singleton(OperationsRuntime::class, LocalOperationsRuntime::class);
+        $this->app->singleton(RestoreLifecycleHooks::class, LaravelRestoreLifecycleHooks::class);
     }
 
     public function boot(): void
@@ -65,6 +70,8 @@ class OperationsAgentServiceProvider extends ServiceProvider
                 BackupCommand::class,
                 BackupVerifyCommand::class,
                 RestorePreflightCommand::class,
+                RestoreApplyCommand::class,
+                RestoreReconcileCommand::class,
                 UpdatePreflightCommand::class,
                 VaultVerifyFileCommand::class,
                 VaultDecryptFileCommand::class,
