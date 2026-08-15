@@ -89,6 +89,7 @@ class RestorePreflightService
         $warnings = [];
         $backupDriver = $manifest['database']['driver'] ?? null;
         $configuredDriver = $this->databaseInfo->configuredDriver();
+        $migration = $this->migrationCompatibility((array) ($manifest['migrations'] ?? []));
         $configuredEnvironment = (string) config('waadby_operations.application.environment');
         if (! hash_equals($configuredEnvironment, (string) ($manifest['environment'] ?? ''))) {
             $blockers[] = 'El environment del backup no coincide exactamente con la instalacion actual.';
@@ -106,8 +107,11 @@ class RestorePreflightService
         if (version_compare((string) $manifest['application_version'], (string) config('waadby_operations.application.version'), '>')) {
             $blockers[] = 'El backup procede de una version posterior a la instalada actualmente.';
         } elseif (version_compare((string) $manifest['application_version'], (string) config('waadby_operations.application.version'), '<')
-            && ! $this->hasForwardMigrationPath($manifest)) {
+            && ! $migration['compatible']) {
             $blockers[] = 'El backup es anterior y no existe una ruta de migracion forward compatible demostrable.';
+        }
+        if (! $migration['compatible'] && ! in_array('El backup es anterior y no existe una ruta de migracion forward compatible demostrable.', $blockers, true)) {
+            $blockers[] = 'La baseline de migrations del backup no es un prefijo demostrable del arbol disponible.';
         }
 
         return [
@@ -130,6 +134,8 @@ class RestorePreflightService
                 'code_snapshot' => false,
             ],
             'migration_baseline' => $manifest['migrations'] ?? ['count' => 0, 'last' => null],
+            'target_migration_state' => $migration['target'],
+            'forward_migrations' => $migration['forward'],
             'configuration_available' => (bool) ($manifest['configuration']['included'] ?? false),
             'checksum_state' => 'valid',
             'verification_source' => $verificationSource,
@@ -139,24 +145,22 @@ class RestorePreflightService
         ];
     }
 
-    /** @param array<string, mixed> $manifest */
-    private function hasForwardMigrationPath(array $manifest): bool
+    /** @param array<string, mixed> $baseline @return array{compatible:bool,target:array<string,mixed>,forward:array<int,string>} */
+    private function migrationCompatibility(array $baseline): array
     {
-        $baseline = $manifest['migrations'] ?? null;
-        if (! is_array($baseline) || ! array_key_exists('count', $baseline)) {
-            return false;
-        }
-
         $current = $this->databaseInfo->migrationState();
-
+        $available = array_values($current['available_names'] ?? []);
+        $count = filter_var($baseline['count'] ?? null, FILTER_VALIDATE_INT);
         $last = $baseline['last'] ?? null;
-        if ((int) $baseline['count'] === 0) {
-            return $last === null;
-        }
+        $compatible = $count !== false && $count >= 0 && $count <= count($available)
+            && (($count === 0 && $last === null)
+                || ($count > 0 && is_string($last) && isset($available[$count - 1]) && hash_equals($available[$count - 1], $last)));
 
-        return is_string($last) && $last !== ''
-            && in_array($last, $current['available_names'] ?? [], true)
-            && (int) $baseline['count'] <= count($current['available_names'] ?? []);
+        return [
+            'compatible' => $compatible,
+            'target' => $this->databaseInfo->migrationSnapshot(),
+            'forward' => $compatible ? array_slice($available, $count) : [],
+        ];
     }
 
     /** @param array<string, mixed> $result */

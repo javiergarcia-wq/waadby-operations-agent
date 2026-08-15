@@ -43,6 +43,8 @@ final class RestorePlan
             ],
             'components' => $preflight['components'],
             'migration_baseline' => $preflight['migration_baseline'],
+            'target_migration_state' => $preflight['target_migration_state'],
+            'forward_migrations' => array_values($preflight['forward_migrations']),
             'migration_policy' => 'forward_only',
             'configuration_policy' => 'preserve_local',
             'safety' => [
@@ -75,6 +77,14 @@ final class RestorePlan
         }
         if (($plan['configuration_policy'] ?? null) !== 'preserve_local' || ($plan['safety']['code_snapshot_applied'] ?? true) !== false) {
             throw new RuntimeException('El plan solicita una politica de configuracion/codigo no permitida.');
+        }
+        foreach (['count', 'last', 'names_sha256', 'available_names_sha256', 'available_count'] as $key) {
+            if (! array_key_exists($key, (array) ($plan['target_migration_state'] ?? []))) {
+                throw new RuntimeException('El plan restore no fija completamente el destino de migrations.');
+            }
+        }
+        if (! is_array($plan['forward_migrations'] ?? null)) {
+            throw new RuntimeException('El plan restore no contiene la lista forward exacta.');
         }
     }
 

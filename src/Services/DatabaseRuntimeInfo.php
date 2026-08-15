@@ -59,6 +59,26 @@ class DatabaseRuntimeInfo
         }
     }
 
+    /** @return array{count:int,last:?string,names_sha256:string,available_names_sha256:string,available_count:int} */
+    public function migrationSnapshot(): array
+    {
+        $state = $this->migrationState();
+
+        return [
+            'count' => (int) $state['count'],
+            'last' => is_string($state['last']) ? $state['last'] : null,
+            'names_sha256' => self::namesHash($state['names']),
+            'available_names_sha256' => self::namesHash($state['available_names']),
+            'available_count' => count($state['available_names']),
+        ];
+    }
+
+    /** @param array<int, string> $names */
+    public static function namesHash(array $names): string
+    {
+        return hash('sha256', json_encode(array_values($names), JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES));
+    }
+
     public static function normalizeVersion(?string $value): ?string
     {
         if (! is_string($value) || trim($value) === '') {

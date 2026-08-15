@@ -11,11 +11,12 @@ final class RestoreJournalStore
     public function __construct(private readonly OperationsPrivateStoragePathPolicy $privateStorage) {}
 
     /** @param array<string, mixed> $plan @return array<string, mixed> */
-    public function begin(array $plan): array
+    public function begin(array $plan, array $projection = []): array
     {
         RestorePlan::validate($plan);
         $id = (string) $plan['plan_id'];
-        $journal = ['journal_version' => 1, 'restore_id' => $id, 'sequence' => 0, 'status' => 'planned', 'point_of_no_return' => false, 'plan' => $plan, 'checkpoints' => [], 'created_at' => now()->utc()->toIso8601String(), 'updated_at' => now()->utc()->toIso8601String()];
+        $projection = $this->projection($plan, $projection);
+        $journal = ['journal_version' => 1, 'restore_id' => $id, 'sequence' => 0, 'status' => 'planned', 'point_of_no_return' => false, 'plan' => $plan, 'projection' => $projection, 'checkpoints' => [], 'created_at' => now()->utc()->toIso8601String(), 'updated_at' => now()->utc()->toIso8601String()];
         $this->write($id, $journal);
 
         return $journal;
@@ -127,5 +128,32 @@ final class RestoreJournalStore
     private function hash(array $journal): string
     {
         return hash('sha256', json_encode($journal, JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES));
+    }
+
+    /** @param array<string, mixed> $plan @param array<string, mixed> $projection @return array<string, mixed> */
+    private function projection(array $plan, array $projection): array
+    {
+        $allowed = collect($projection)->only([
+            'installation_public_id', 'source_backup_public_id', 'source_vault_replica_public_id',
+            'safety_backup_public_id', 'safety_vault_replica_public_id', 'requested_by_user_id',
+            'reason', 'started_at', 'integration_delivery_hold',
+        ])->all();
+
+        return [
+            'application_code' => (string) $plan['target']['application_code'],
+            'environment' => (string) $plan['target']['environment'],
+            'installation_public_id' => $allowed['installation_public_id'] ?? null,
+            'source_type' => (string) $plan['source']['type'],
+            'source_backup_public_id' => $allowed['source_backup_public_id'] ?? $plan['source']['artifact_id'] ?? null,
+            'source_vault_replica_public_id' => $allowed['source_vault_replica_public_id'] ?? $plan['source']['vault_replica_id'] ?? null,
+            'safety_backup_public_id' => $allowed['safety_backup_public_id'] ?? null,
+            'safety_vault_replica_public_id' => $allowed['safety_vault_replica_public_id'] ?? null,
+            'requested_by_user_id' => $allowed['requested_by_user_id'] ?? null,
+            'reason' => mb_substr((string) ($allowed['reason'] ?? 'Restore gobernado'), 0, 2000),
+            'plan_sha256' => (string) $plan['plan_sha256'],
+            'source_sha256' => (string) $plan['source']['sha256'],
+            'started_at' => $allowed['started_at'] ?? now()->utc()->toIso8601String(),
+            'integration_delivery_hold' => (bool) ($allowed['integration_delivery_hold'] ?? true),
+        ];
     }
 }

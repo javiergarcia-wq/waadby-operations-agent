@@ -90,6 +90,7 @@ final class DatabaseRestoreService
                 throw new RuntimeException('El destino SQLite restaurado no supera integrity_check.');
             }
             unset($pdo);
+            $this->database->disconnect($connection);
             if (is_file($target) && ! @rename($target, $previous)) {
                 throw new RuntimeException('No se pudo apartar el destino SQLite para el cutover.');
             }

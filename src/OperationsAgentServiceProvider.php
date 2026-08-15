@@ -22,12 +22,14 @@ use Waadby\OperationsAgent\Console\Commands\VaultVerifyFileCommand;
 use Waadby\OperationsAgent\Contracts\OperationsReporter;
 use Waadby\OperationsAgent\Contracts\OperationsRuntime;
 use Waadby\OperationsAgent\Contracts\RestoreLifecycleHooks;
+use Waadby\OperationsAgent\Contracts\RestoreReconciliationSink;
 use Waadby\OperationsAgent\Database\DatabaseBackupDriverResolver;
 use Waadby\OperationsAgent\Database\MySqlDatabaseBackupDriver;
 use Waadby\OperationsAgent\Database\SqliteDatabaseBackupDriver;
 use Waadby\OperationsAgent\Restores\LaravelRestoreLifecycleHooks;
 use Waadby\OperationsAgent\Services\LocalOperationsRuntime;
 use Waadby\OperationsAgent\Support\FilesystemOperationsReporter;
+use Waadby\OperationsAgent\Support\NullRestoreReconciliationSink;
 
 class OperationsAgentServiceProvider extends ServiceProvider
 {
@@ -41,6 +43,7 @@ class OperationsAgentServiceProvider extends ServiceProvider
         ));
         $this->app->singleton(OperationsRuntime::class, LocalOperationsRuntime::class);
         $this->app->singleton(RestoreLifecycleHooks::class, LaravelRestoreLifecycleHooks::class);
+        $this->app->singleton(RestoreReconciliationSink::class, NullRestoreReconciliationSink::class);
     }
 
     public function boot(): void

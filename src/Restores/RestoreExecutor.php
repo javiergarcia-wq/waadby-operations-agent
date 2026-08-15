@@ -5,6 +5,7 @@ namespace Waadby\OperationsAgent\Restores;
 use RuntimeException;
 use Waadby\OperationsAgent\Contracts\OperationsReporter;
 use Waadby\OperationsAgent\Contracts\RestoreLifecycleHooks;
+use Waadby\OperationsAgent\Contracts\RestoreReconciliationSink;
 use Waadby\OperationsAgent\Services\BackupVerifier;
 use Waadby\OperationsAgent\Services\RestorePreflightService;
 
@@ -18,6 +19,7 @@ final class RestoreExecutor
         private readonly RestoreJournalStore $journals,
         private readonly RestoreLifecycleHooks $lifecycle,
         private readonly OperationsReporter $reporter,
+        private readonly RestoreReconciliationSink $reconciliation,
     ) {}
 
     /** @param array<string, mixed> $plan @param array<string, mixed> $context @return array<string, mixed> */
@@ -28,7 +30,7 @@ final class RestoreExecutor
         }
         RestorePlan::validate($plan);
         $restoreId = (string) $plan['plan_id'];
-        $journal = $this->existingOrBegin($plan);
+        $journal = $this->existingOrBegin($plan, (array) ($context['projection'] ?? []));
         if (($journal['status'] ?? null) === 'succeeded') {
             return ['restore_id' => $restoreId, 'status' => 'succeeded', 'idempotent' => true];
         }
@@ -50,8 +52,9 @@ final class RestoreExecutor
             if (is_string($safetyStage) && is_array($safetyInspection)) {
                 $this->applier->validate($safetyStage, $safetyInspection['manifest']);
             }
-            $this->preflight->analyze($sourcePath, null, $context['actor_id'] ?? null, true);
+            $revalidated = $this->preflight->analyze($sourcePath, null, $context['actor_id'] ?? null, true);
             RestorePlan::validate($plan);
+            $this->assertPreflightMatchesPlan($revalidated, $plan);
             if (! hash_equals((string) $plan['source']['sha256'], hash_file('sha256', $sourcePath))) {
                 throw new RuntimeException('El origen restore cambio antes del punto de no retorno.');
             }
@@ -72,6 +75,7 @@ final class RestoreExecutor
             $this->journals->checkpoint($restoreId, 'data_applied', 'migrating');
             $this->lifecycle->migrateForward();
             $this->reporter->audit('operations.restore.migrations_completed', ['restore_id' => $restoreId, 'result' => 'forward_only']);
+            $this->reconcileBestEffort($restoreId);
             $this->lifecycle->smokeInternal();
             $this->journals->checkpoint($restoreId, 'internal_smoke', 'healthchecking');
             $this->lifecycle->resume();
@@ -83,17 +87,20 @@ final class RestoreExecutor
                 throw $httpFailure;
             }
             $this->journals->checkpoint($restoreId, 'completed', 'succeeded');
+            $this->reconcileBestEffort($restoreId);
             $this->reporter->audit('operations.restore.succeeded', ['restore_id' => $restoreId, 'result' => 'succeeded']);
 
             return ['restore_id' => $restoreId, 'status' => 'succeeded', 'plan_sha256' => $plan['plan_sha256']];
         } catch (\Throwable $failure) {
             if (! $pointOfNoReturn) {
                 $this->journals->checkpoint($restoreId, 'failed_before_apply', 'failed', ['error' => $this->safe($failure)]);
+                $this->reconcileBestEffort($restoreId);
                 $this->reporter->audit('operations.restore.failed', ['restore_id' => $restoreId, 'result' => 'failed']);
                 throw $failure;
             }
             if (! is_string($safetyStage)) {
                 $this->journals->checkpoint($restoreId, 'no_safety_rollback', 'recovery_required', ['cause' => $this->safe($failure)]);
+                $this->reconcileBestEffort($restoreId);
                 $this->reporter->audit('operations.restore.recovery_required', ['restore_id' => $restoreId, 'result' => 'recovery_required', 'disaster_mode' => true]);
                 throw new RuntimeException('Disaster restore fallo sin safety backup; se requiere recuperacion manual.', previous: $failure);
             }
@@ -106,13 +113,15 @@ final class RestoreExecutor
                 $this->lifecycle->resume();
                 $this->lifecycle->smokeHttp();
                 $this->journals->checkpoint($restoreId, 'rollback_completed', 'rolled_back', ['cause' => $this->safe($failure)]);
+                $this->reconcileBestEffort($restoreId);
                 $this->reporter->audit('operations.restore.rolled_back', ['restore_id' => $restoreId, 'result' => 'rolled_back']);
 
                 return ['restore_id' => $restoreId, 'status' => 'rolled_back', 'failure_message_safe' => $this->safe($failure)];
             } catch (\Throwable $rollbackFailure) {
                 $this->journals->checkpoint($restoreId, 'rollback_failed', 'recovery_required', ['cause' => $this->safe($failure), 'rollback_error' => $this->safe($rollbackFailure)]);
+                $this->reconcileBestEffort($restoreId);
                 $this->reporter->audit('operations.restore.recovery_required', ['restore_id' => $restoreId, 'result' => 'recovery_required']);
-                throw new RuntimeException('Restore y rollback fallaron; se requiere recuperacion manual mediante el journal privado.', previous: $rollbackFailure);
+                throw new RuntimeException('Restore y rollback fallaron; se requiere recuperacion manual mediante el journal privado. '.$this->safe($rollbackFailure), previous: $rollbackFailure);
             }
         } finally {
             $this->archives->cleanup($sourceStage);
@@ -143,8 +152,37 @@ final class RestoreExecutor
         }
     }
 
+    /** @param array<string, mixed> $preflight @param array<string, mixed> $plan */
+    private function assertPreflightMatchesPlan(array $preflight, array $plan): void
+    {
+        $checks = [
+            [(string) $preflight['application_code'], (string) $plan['target']['application_code']],
+            [(string) $preflight['environment'], (string) $plan['target']['environment']],
+            [strtolower((string) $preflight['backup_sha256']), strtolower((string) $plan['source']['sha256'])],
+            [(string) $preflight['backup_version'], (string) $plan['target']['backup_version']],
+            [(string) $preflight['current_version'], (string) $plan['target']['current_version']],
+            [(string) $preflight['configured_database_driver'], (string) $plan['target']['database_driver']],
+            [$this->canonical($preflight['migration_baseline']), $this->canonical($plan['migration_baseline'])],
+            [$this->canonical($preflight['target_migration_state']), $this->canonical($plan['target_migration_state'])],
+            [$this->canonical($preflight['forward_migrations']), $this->canonical($plan['forward_migrations'])],
+        ];
+        foreach ($checks as [$current, $authorized]) {
+            if (! hash_equals($authorized, $current)) {
+                throw new RuntimeException('El destino o preflight restore cambio despues de autorizar el plan.');
+            }
+        }
+        if (($preflight['compatible'] ?? false) !== true) {
+            throw new RuntimeException('El preflight revalidado ya no es compatible.');
+        }
+    }
+
+    private function canonical(mixed $value): string
+    {
+        return json_encode($value, JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES);
+    }
+
     /** @param array<string, mixed> $plan @return array<string, mixed> */
-    private function existingOrBegin(array $plan): array
+    private function existingOrBegin(array $plan, array $projection): array
     {
         try {
             $journal = $this->journals->read((string) $plan['plan_id']);
@@ -158,7 +196,26 @@ final class RestoreExecutor
                 throw $e;
             }
 
-            return $this->journals->begin($plan);
+            return $this->journals->begin($plan, $projection);
+        }
+    }
+
+    private function reconcileBestEffort(string $restoreId): void
+    {
+        try {
+            $journal = $this->journals->read($restoreId);
+            $this->reconciliation->reconcile($journal);
+            $status = (string) ($journal['status'] ?? '');
+            $event = match (true) {
+                in_array($status, ['succeeded', 'rolled_back'], true) => 'operations.restore.completed',
+                $status === 'recovery_required' => 'operations.restore.recovery_required',
+                default => null,
+            };
+            if ($event !== null) {
+                $this->reporter->audit($event, ['restore_id' => $restoreId, 'result' => $status, 'journal_sequence' => $journal['sequence'] ?? null, 'reconciled' => true]);
+            }
+        } catch (\Throwable) {
+            // The filesystem journal remains authoritative until reconciliation can be retried.
         }
     }
 
