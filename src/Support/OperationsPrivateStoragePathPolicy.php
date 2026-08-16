@@ -6,7 +6,7 @@ use RuntimeException;
 
 final class OperationsPrivateStoragePathPolicy
 {
-    public function prepareDirectory(
+    public function validateConfiguredPrivatePath(
         string $configuredPath,
         ?string $workingDirectory = null,
         ?string $publicDirectory = null,
@@ -15,6 +15,17 @@ final class OperationsPrivateStoragePathPolicy
         $public = $this->canonicalPublicDirectory($publicDirectory ?? public_path());
         $candidate = $this->resolveFromExistingAncestor($absolute);
         $this->assertOutsidePublic($candidate, $public);
+
+        return $candidate;
+    }
+
+    public function prepareDirectory(
+        string $configuredPath,
+        ?string $workingDirectory = null,
+        ?string $publicDirectory = null,
+    ): string {
+        $candidate = $this->validateConfiguredPrivatePath($configuredPath, $workingDirectory, $publicDirectory);
+        $public = $this->canonicalPublicDirectory($publicDirectory ?? public_path());
 
         if (! is_dir($candidate) && ! mkdir($candidate, 0700, true) && ! is_dir($candidate)) {
             throw new RuntimeException('No se pudo crear el directorio privado de Operations.');
