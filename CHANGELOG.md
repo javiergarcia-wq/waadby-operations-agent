@@ -1,6 +1,6 @@
 # Changelog
 
-## 1.0.0 - 2026-09-03
+## 1.2.0 - 2026-09-03
 
 - Primera distribución canónica independiente extraída con historia desde WAADBY ACCESS.
 - Runtime consumidor configurable y validado contra `OperationsRuntime`.

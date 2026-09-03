@@ -7,6 +7,7 @@ use Illuminate\Database\DatabaseManager;
 use Illuminate\Filesystem\FilesystemManager;
 use Illuminate\Support\Facades\Schema;
 use Symfony\Component\Process\Process;
+use Waadby\OperationsAgent\OperationsAgent;
 use Waadby\OperationsAgent\Updates\InstalledReleaseStore;
 
 class InventoryService
@@ -68,7 +69,7 @@ class InventoryService
                 'preflight' => true,
                 'apply' => (bool) config('waadby_operations.updates.apply_enabled', false),
                 'rollback' => (bool) config('waadby_operations.updates.apply_enabled', false),
-                'agent_version' => '1.2.0',
+                'agent_version' => OperationsAgent::VERSION,
             ],
             'timestamp' => now()->utc()->toIso8601String(),
         ];
