@@ -16,18 +16,33 @@ final class EnrollmentClientTest extends TestCase
     public function test_enrollment_validates_jwks_and_persists_bound_identity_without_token(): void
     {
         $token = 'one-time-secret-token';
+        config(['waadby_operations.application.installation_id' => 'local-installation-a']);
         $this->fakeEnrollment($this->enrollmentDocument());
 
         $identity = app(EnrollmentClient::class)->enroll('http://127.0.0.1', $token);
 
         $this->assertSame('waadby-billing', $identity['application_code']);
         $this->assertSame('testing', $identity['environment']);
+        $this->assertSame('local-installation-a', $identity['local_installation_id']);
         $this->assertTrue(app(EnrollmentStore::class)->isReady());
         $this->assertStringNotContainsString($token, file_get_contents(app(EnrollmentStore::class)->path()));
         Http::assertSent(fn ($request): bool => $request->url() === 'http://127.0.0.1/api/v1/operations/enrollments/claim'
             && $request['token'] === $token
             && $request['protocol_version'] === '1'
             && $request['capabilities']['inventory'] === true);
+    }
+
+    public function test_copying_enrollment_to_another_local_installation_fails_closed(): void
+    {
+        config(['waadby_operations.application.installation_id' => 'local-installation-a']);
+        $this->fakeEnrollment($this->enrollmentDocument());
+        app(EnrollmentClient::class)->enroll('http://127.0.0.1', 'token');
+
+        $this->assertTrue(app(EnrollmentStore::class)->isReady());
+
+        config(['waadby_operations.application.installation_id' => 'local-installation-b']);
+
+        $this->assertFalse(app(EnrollmentStore::class)->isReady());
     }
 
     public function test_wrong_application_fails_closed(): void

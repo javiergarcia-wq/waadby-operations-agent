@@ -73,6 +73,7 @@ final class EnrollmentClient
         }
         $identity = [
             'installation_id' => $installationId,
+            'local_installation_id' => (string) config('waadby_operations.application.installation_id', ''),
             'application_code' => $applicationCode,
             'environment' => $environment,
             'access_origin' => $origin,

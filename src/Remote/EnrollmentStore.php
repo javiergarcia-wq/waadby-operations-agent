@@ -75,6 +75,12 @@ final class EnrollmentStore
         }
         $applicationCode = (string) config('waadby_operations.application.code');
         $environment = (string) config('waadby_operations.application.environment');
+        $localInstallationId = (string) config('waadby_operations.application.installation_id', '');
+        $storedLocalInstallationId = $identity['local_installation_id'] ?? null;
+        $localInstallationMatches = $localInstallationId === ''
+            || (is_string($storedLocalInstallationId)
+                && $storedLocalInstallationId !== ''
+                && hash_equals($localInstallationId, $storedLocalInstallationId));
 
         return is_array($identity)
             && ! isset($identity['locally_disabled_at'])
@@ -87,7 +93,8 @@ final class EnrollmentStore
             && is_string($identity['application_code'] ?? null)
             && is_string($identity['environment'] ?? null)
             && hash_equals($applicationCode, $identity['application_code'])
-            && hash_equals($environment, $identity['environment']);
+            && hash_equals($environment, $identity['environment'])
+            && $localInstallationMatches;
     }
 
     public function path(): string

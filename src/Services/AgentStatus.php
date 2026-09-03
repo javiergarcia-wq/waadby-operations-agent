@@ -26,6 +26,7 @@ final class AgentStatus
             'application_code' => (string) config('waadby_operations.application.code', ''),
             'environment' => (string) config('waadby_operations.application.environment', ''),
             'installation_id' => is_array($identity) ? ($identity['installation_id'] ?? null) : null,
+            'local_installation_id' => is_array($identity) ? ($identity['local_installation_id'] ?? null) : null,
             'access_origin' => is_array($identity) ? ($identity['access_origin'] ?? null) : null,
             'jwks_uri' => is_array($identity) ? ($identity['jwks_uri'] ?? null) : null,
             'last_contact_at' => is_array($identity) ? ($identity['last_contact_at'] ?? null) : null,

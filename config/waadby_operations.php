@@ -16,6 +16,7 @@ return [
         'code' => env('WAADBY_APPLICATION_CODE', 'laravel-application'),
         'name' => env('WAADBY_APPLICATION_NAME', env('APP_NAME', 'Laravel application')),
         'environment' => env('WAADBY_APPLICATION_ENVIRONMENT', env('APP_ENV', 'production')),
+        'installation_id' => env('WAADBY_APPLICATION_INSTALLATION_ID'),
         'version' => env('WAADBY_APPLICATION_VERSION', '0.0.0'),
     ],
     'enabled' => env('ACCESS_OPERATIONS_ENABLED', false),
