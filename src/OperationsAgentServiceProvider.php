@@ -41,7 +41,14 @@ class OperationsAgentServiceProvider extends ServiceProvider
             $app['db'],
             [new SqliteDatabaseBackupDriver($app['db']), new MySqlDatabaseBackupDriver($app['db'])],
         ));
-        $this->app->singleton(OperationsRuntime::class, LocalOperationsRuntime::class);
+        $this->app->singleton(OperationsRuntime::class, function ($app): OperationsRuntime {
+            $runtime = config('waadby_operations.runtime', LocalOperationsRuntime::class);
+            if (! is_string($runtime) || ! is_a($runtime, OperationsRuntime::class, true)) {
+                throw new \RuntimeException('WAADBY_OPERATIONS_RUNTIME debe implementar OperationsRuntime.');
+            }
+
+            return $app->make($runtime);
+        });
         $this->app->singleton(RestoreLifecycleHooks::class, LaravelRestoreLifecycleHooks::class);
         $this->app->singleton(RestoreReconciliationSink::class, NullRestoreReconciliationSink::class);
     }

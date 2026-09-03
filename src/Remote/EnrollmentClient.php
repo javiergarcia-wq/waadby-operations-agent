@@ -19,7 +19,11 @@ final class EnrollmentClient
         $origin = $this->origin($accessUrl);
         $response = $this->http->baseUrl($origin)->acceptJson()->asJson()->withOptions([
             'allow_redirects' => false, 'verify' => ! $this->localHttpAllowed($origin),
-        ])->timeout(10)->post('/api/v1/operations/enrollments/claim', ['token' => $token]);
+        ])->timeout(10)->post('/api/v1/operations/enrollments/claim', [
+            'token' => $token,
+            'protocol_version' => '1',
+            'capabilities' => (array) config('waadby_operations.capabilities', []),
+        ]);
         if (! $response->successful()) {
             throw new RuntimeException('ACCESS rechazó el enrollment.');
         }

@@ -1,6 +1,17 @@
 <?php
 
+use Waadby\OperationsAgent\Services\LocalOperationsRuntime;
+
 return [
+    'runtime' => env('WAADBY_OPERATIONS_RUNTIME', LocalOperationsRuntime::class),
+    'capabilities' => [
+        'inventory' => true,
+        'backup' => true,
+        'backup_verify' => true,
+        'restore_preflight' => true,
+        'update_preflight' => true,
+        'protocol_version' => '1',
+    ],
     'application' => [
         'code' => env('WAADBY_APPLICATION_CODE', 'laravel-application'),
         'name' => env('WAADBY_APPLICATION_NAME', env('APP_NAME', 'Laravel application')),
