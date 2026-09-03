@@ -49,6 +49,7 @@ final class VerifyRemoteOperationsRequest
             if (! $store->add('waadby-operations-jti:'.hash('sha256', (string) $claims['jti']), true, $ttl)) {
                 throw new \RuntimeException('request_replayed');
             }
+            $this->enrollment->recordContact($request->isMethod('get') && $request->path() === 'waadby-operations/v1/inventory');
             $request->attributes->set('waadby_operations_claims', $claims);
         } catch (\RuntimeException $exception) {
             $code = in_array($exception->getMessage(), ['request_replayed', 'replay_store_unavailable', 'signature_claims_invalid'], true)

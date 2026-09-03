@@ -52,6 +52,20 @@ final class EnrollmentStore
         $this->put($identity);
     }
 
+    public function recordContact(bool $inventory = false): void
+    {
+        $identity = $this->get();
+        if (! is_array($identity)) {
+            throw new RuntimeException('El agente no está enrolled.');
+        }
+
+        $identity['last_contact_at'] = now()->toIso8601String();
+        if ($inventory) {
+            $identity['last_inventory_at'] = $identity['last_contact_at'];
+        }
+        $this->put($identity);
+    }
+
     public function isReady(): bool
     {
         try {
@@ -64,6 +78,7 @@ final class EnrollmentStore
 
         return is_array($identity)
             && ! isset($identity['locally_disabled_at'])
+            && ! isset($identity['revoked_at'])
             && filled($identity['installation_id'] ?? null)
             && filled($identity['access_origin'] ?? null)
             && is_array($identity['jwks'] ?? null)
