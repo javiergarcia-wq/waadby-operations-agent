@@ -4,8 +4,10 @@ namespace Tests\Package\Operations\Unit;
 
 use Illuminate\Support\Facades\File;
 use PHPUnit\Framework\Attributes\DataProvider;
+use ReflectionMethod;
 use RuntimeException;
 use Tests\TestCase;
+use Waadby\OperationsAgent\Console\Commands\ReleaseBuildCommand;
 use Waadby\OperationsAgent\Services\ReleaseManifestValidator;
 use Waadby\OperationsAgent\Updates\CodeApplyService;
 use Waadby\OperationsAgent\Updates\CodeSnapshotService;
@@ -20,6 +22,16 @@ use ZipArchive;
 
 final class ReleaseUpdatePrimitivesTest extends TestCase
 {
+    public function test_release_builder_excludes_git_metadata_in_direct_checkouts_and_worktrees(): void
+    {
+        $filter = new ReflectionMethod(ReleaseBuildCommand::class, 'isExcluded');
+        $command = new ReleaseBuildCommand;
+
+        $this->assertTrue($filter->invoke($command, '.git', false));
+        $this->assertTrue($filter->invoke($command, '.git/config', false));
+        $this->assertFalse($filter->invoke($command, '.github/workflows/ci.yml', false));
+    }
+
     private string $root;
 
     private string $private;
