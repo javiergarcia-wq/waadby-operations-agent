@@ -114,11 +114,7 @@ final class ReleaseBuildCommand extends Command
             }
             $relative = str_replace('\\', '/', $file->getRelativePathname());
             $lower = strtolower($relative);
-            $excluded = str_starts_with($lower, '.env')
-                || preg_match('#^(?:storage|backups|node_modules|logs|vault|waadby-vault)(?:/|$)#', $lower)
-                || preg_match('#^packages/waadby-operations-agent/src/(?:updates|jobs/executeupdatesession\.php|http/controllers/remoteupdatecontroller\.php|http/middleware/verifyremoteoperationsrequest\.php)(?:/|$)#', $lower)
-                || (! $includeVendor && preg_match('#^vendor(?:/|$)#', $lower));
-            if ($excluded) {
+            if ($this->isExcluded($lower, $includeVendor)) {
                 continue;
             }
             $paths->assertSafe($relative, allowUpdaterRuntime: true);
@@ -126,6 +122,16 @@ final class ReleaseBuildCommand extends Command
         }
 
         return $result;
+    }
+
+    private function isExcluded(string $lower, bool $includeVendor): bool
+    {
+        return $lower === '.git'
+            || str_starts_with($lower, '.git/')
+            || str_starts_with($lower, '.env')
+            || (bool) preg_match('#^(?:storage|backups|node_modules|logs|vault|waadby-vault)(?:/|$)#', $lower)
+            || (bool) preg_match('#^packages/waadby-operations-agent/src/(?:updates|jobs/executeupdatesession\.php|http/controllers/remoteupdatecontroller\.php|http/middleware/verifyremoteoperationsrequest\.php)(?:/|$)#', $lower)
+            || (! $includeVendor && (bool) preg_match('#^vendor(?:/|$)#', $lower));
     }
 
     /** @return list<string> */
