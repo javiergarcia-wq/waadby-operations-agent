@@ -22,7 +22,7 @@ PROFILES = {
     "enum1":    {"rate": "+1%", "pitch": "+3Hz", "volume": "+2%"},
     "enum2":    {"rate": "+1%", "pitch": "+2Hz", "volume": "+2%"},
     "enum3":    {"rate": "+1%", "pitch": "+1Hz", "volume": "+2%"},
-    "enum4":    {"rate": "0%",  "pitch": "-1Hz", "volume": "+2%"},
+    "enum4":    {"rate": "+0%", "pitch": "-1Hz", "volume": "+2%"},
     "enum5":    {"rate": "-1%", "pitch": "-2Hz", "volume": "+3%"},
     "close":    {"rate": "+3%", "pitch": "+1Hz", "volume": "+2%"},
 }
