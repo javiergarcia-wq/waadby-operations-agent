@@ -1,0 +1,37 @@
+name: Temporary LOTO Training Production Audio
+
+on:
+  push:
+    branches:
+      - codex/runtime-extension-v1
+    paths:
+      - 'tmp_loto_production/**'
+      - '.github/workflows/tmp-loto-production.yml'
+
+jobs:
+  render-audio:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        part: [1, 2, 3, 4]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install audio tools
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq ffmpeg
+          python -m pip install --disable-pip-version-check edge-tts
+      - name: Render exact Elvira narration
+        run: python tmp_loto_production/render.py ${{ matrix.part }}
+      - name: Verify voice lock
+        run: test "$(cat tmp_loto_production/output/video_${{ matrix.part }}/VOICE_LOCK.txt)" = "es-ES-ElviraNeural"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: loto-training-audio-video-${{ matrix.part }}
+          path: tmp_loto_production/output/video_${{ matrix.part }}/
+          retention-days: 1
