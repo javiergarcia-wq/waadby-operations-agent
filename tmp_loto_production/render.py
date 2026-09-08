@@ -120,7 +120,8 @@ async def main():
     if len(sys.argv) != 2:
         raise SystemExit("usage: render.py <part-number>")
     part = int(sys.argv[1])
-    module = importlib.import_module(f"tmp_loto_production.part{part}")
+    sys.path.insert(0, str(ROOT.resolve()))
+    module = importlib.import_module(f"part{part}")
     slides = module.SLIDES
     part_dir = OUT_ROOT / f"video_{part}"
     part_dir.mkdir(parents=True, exist_ok=True)
